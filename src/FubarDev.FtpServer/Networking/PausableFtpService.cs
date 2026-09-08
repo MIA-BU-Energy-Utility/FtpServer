@@ -82,7 +82,7 @@ namespace FubarDev.FtpServer.Networking
                         if (status == FtpServiceStatus.Running)
                         {
                             // ReSharper disable once AccessToDisposedClosure
-                            semaphore.Release();
+                            ReleaseIfNotDisposed(semaphore);
                         }
                     }));
 
@@ -180,7 +180,7 @@ namespace FubarDev.FtpServer.Networking
                 if (status == FtpServiceStatus.Running)
                 {
                     // ReSharper disable once AccessToDisposedClosure
-                    semaphore.Release();
+                    ReleaseIfNotDisposed(semaphore);
                 }
             }));
 
@@ -309,6 +309,25 @@ namespace FubarDev.FtpServer.Networking
             statusProgress.Report(FtpServiceStatus.Stopped);
             await OnStoppedAsync(CancellationToken.None)
                .ConfigureAwait(false);
+        }
+
+        // The `using`-scoped semaphore in StartAsync/ContinueAsync can already be disposed by
+        // the time this runs: Progress<T>.Report posts its callback onto the captured
+        // SynchronizationContext (here, the ThreadPool, since this runs with no ambient context)
+        // rather than invoking it synchronously, so it can fire after WaitAsync has returned and
+        // the `using` block has disposed the semaphore. An exception escaping here is
+        // unrecoverable — it terminates the process (see
+        // https://github.com/FubarDevelopment/FtpServer/issues/102) — and by the time it's
+        // disposed there is nothing left waiting to be released anyway.
+        private static void ReleaseIfNotDisposed(SemaphoreSlim semaphore)
+        {
+            try
+            {
+                semaphore.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
     }
 }
