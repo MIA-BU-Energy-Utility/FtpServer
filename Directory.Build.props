@@ -1,1 +1,11 @@
-<Project />
+<Project>
+  <PropertyGroup>
+    <!-- This repo is consumed as a submodule/ProjectReference by melvapro, whose CI builds with
+         `dotnet build /warnaserror` - a command-line switch that overrides any project-level
+         TreatWarningsAsErrors=false, so the only way to stop a warning from becoming a build
+         error in that consumer is to suppress it outright. This tree predates nullable reference
+         type adoption; these are its own pre-existing nullable-reference warnings, not something
+         a downstream fork is here to fix. -->
+    <NoWarn>$(NoWarn);CS8601;CS8604;CS8618;CS8620;CS8621;CS8634</NoWarn>
+  </PropertyGroup>
+</Project>
