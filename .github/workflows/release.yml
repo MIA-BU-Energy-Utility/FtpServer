@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Tag, pack & publish release
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # Version scheme: YYYY.MM.PATCH (e.g. 2026.9.0). PATCH counts releases within the
+      # same calendar month and resets to 0 the following month; no zero-padding, since
+      # NuGet/SemVer numeric identifiers may not have leading zeros.
+      - name: Compute date-patch version
+        id: version
+        run: |
+          git fetch --tags --force
+
+          YEAR=$(date -u +%Y)
+          MONTH=$(date -u +%-m)
+          PREFIX="v${YEAR}.${MONTH}."
+
+          LAST=$(git tag -l "${PREFIX}*" | sed "s/^${PREFIX}//" | sort -n | tail -1)
+          if [ -z "$LAST" ]; then
+            PATCH=0
+          else
+            PATCH=$((LAST + 1))
+          fi
+
+          VERSION="${YEAR}.${MONTH}.${PATCH}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore FubarDev.FtpServer.sln
+
+      - name: Pack
+        run: >
+          dotnet pack FubarDev.FtpServer.sln
+          --configuration Release
+          --no-restore
+          --output ./artifacts
+          -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Push packages to GitHub Packages
+        run: >
+          dotnet nuget push "./artifacts/*.nupkg"
+          --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          --api-key ${{ secrets.GITHUB_TOKEN }}
+          --skip-duplicate
+
+      - name: Tag release commit
+        run: |
+          git tag ${{ steps.version.outputs.tag }} ${{ github.event.workflow_run.head_sha }}
+          git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release create ${{ steps.version.outputs.tag }}
+          ./artifacts/*.nupkg ./artifacts/*.snupkg
+          --title ${{ steps.version.outputs.tag }}
+          --generate-notes
