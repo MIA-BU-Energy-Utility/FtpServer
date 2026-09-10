@@ -3,7 +3,7 @@
   <Import Project="DotNetSdkMono.props" />
 
   <PropertyGroup>
-    <LangVersion>8.0</LangVersion>
+    <LangVersion>latest</LangVersion>
     <VersionPrefix>3.0.0</VersionPrefix>
     <Product>FTP Server</Product>
     <Copyright>Fubar Development Junker 2015-2019, 40three GmbH 2019</Copyright>

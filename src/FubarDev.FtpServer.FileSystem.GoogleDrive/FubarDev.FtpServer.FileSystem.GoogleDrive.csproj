@@ -6,7 +6,7 @@
     <PackageTags>portable;FTP;server;Google;Drive</PackageTags>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Google.Apis.Drive.v3" Version="1.39.0.1566" />
+    <PackageReference Include="Google.Apis.Drive.v3" Version="1.76.0.4252" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\FubarDev.FtpServer.Abstractions\FubarDev.FtpServer.Abstractions.csproj" />
