@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using FluentFTP;
+using FluentFTP.Exceptions;
 
 using FubarDev.FtpServer.AccountManagement;
 
@@ -28,16 +29,16 @@ namespace FubarDev.FtpServer.Tests.Issues
         [Fact]
         public async Task LoginSucceedsWithTester()
         {
-            using var client = new FtpClient("127.0.0.1", Server.Port, "tester", "test");
-            await client.ConnectAsync();
+            using var client = new AsyncFtpClient("127.0.0.1", "tester", "test", Server.Port);
+            await client.Connect();
         }
 
         [Fact]
         public async Task LogoutCalledAfterSuccessfulLogin()
         {
-            using (var client = new FtpClient("127.0.0.1", Server.Port, "tester", "test"))
+            using (var client = new AsyncFtpClient("127.0.0.1", "tester", "test", Server.Port))
             {
-                await client.ConnectAsync();
+                await client.Connect();
             }
 
             var membershipProvider =
@@ -61,17 +62,15 @@ namespace FubarDev.FtpServer.Tests.Issues
         [Fact]
         public async Task LoginFailsWithWrongUserName()
         {
-            using var client = new FtpClient("127.0.0.1", Server.Port, "testerX", "test");
-            await Assert.ThrowsAsync<FtpAuthenticationException>(() => client.ConnectAsync())
-               .ConfigureAwait(false);
+            using var client = new AsyncFtpClient("127.0.0.1", "testerX", "test", Server.Port);
+            await Assert.ThrowsAsync<FtpAuthenticationException>(() => client.Connect());
         }
 
         [Fact]
         public async Task LoginFailsWithWrongPassword()
         {
-            using var client = new FtpClient("127.0.0.1", Server.Port, "tester", "testX");
-            await Assert.ThrowsAsync<FtpAuthenticationException>(() => client.ConnectAsync())
-               .ConfigureAwait(false);
+            using var client = new AsyncFtpClient("127.0.0.1", "tester", "testX", Server.Port);
+            await Assert.ThrowsAsync<FtpAuthenticationException>(() => client.Connect());
         }
 
         /// <inheritdoc />

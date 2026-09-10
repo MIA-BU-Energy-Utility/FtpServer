@@ -1,7 +1,9 @@
-FROM mcr.microsoft.com/dotnet/core/runtime:2.2-stretch-slim AS base
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS base
 WORKDIR /app
+# PAM authentication needs libpam; confirm it's present (glibc-based Ubuntu, not Alpine/musl, for native interop compatibility).
+RUN apt-get update && apt-get install -y --no-install-recommends libpam0g && rm -rf /var/lib/apt/lists/*
 
-FROM mcr.microsoft.com/dotnet/core/sdk:2.2-stretch AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 COPY ["samples/TestFtpServer/TestFtpServer.csproj", "samples/TestFtpServer/"]
 COPY ["samples/TestFtpServer.Api/TestFtpServer.Api.csproj", "samples/TestFtpServer.Api/"]
@@ -12,6 +14,7 @@ COPY ["src/FubarDev.FtpServer.FileSystem.DotNet/FubarDev.FtpServer.FileSystem.Do
 COPY ["src/FubarDev.FtpServer.MembershipProvider.Pam/FubarDev.FtpServer.MembershipProvider.Pam.csproj", "src/FubarDev.FtpServer.MembershipProvider.Pam/"]
 COPY ["src/FubarDev.FtpServer.FileSystem.Unix/FubarDev.FtpServer.FileSystem.Unix.csproj", "src/FubarDev.FtpServer.FileSystem.Unix/"]
 COPY ["src/FubarDev.FtpServer.FileSystem.GoogleDrive/FubarDev.FtpServer.FileSystem.GoogleDrive.csproj", "src/FubarDev.FtpServer.FileSystem.GoogleDrive/"]
+COPY ["src/FubarDev.FtpServer.FileSystem.S3/FubarDev.FtpServer.FileSystem.S3.csproj", "src/FubarDev.FtpServer.FileSystem.S3/"]
 COPY ["src/FubarDev.FtpServer/FubarDev.FtpServer.csproj", "src/FubarDev.FtpServer/"]
 COPY ["src/FubarDev.FtpServer.Commands/FubarDev.FtpServer.Commands.csproj", "src/FubarDev.FtpServer.Commands/"]
 RUN dotnet restore "samples/TestFtpServer/TestFtpServer.csproj"

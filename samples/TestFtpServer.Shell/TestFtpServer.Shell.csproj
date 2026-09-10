@@ -3,7 +3,7 @@
   <Import Project="../../Global.props" />
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
@@ -16,13 +16,16 @@
     </Content>
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="JKang.IpcServiceFramework.Client" Version="2.2.2" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="6.0.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="6.0.0" />
-    <PackageReference Include="Scrutor" Version="3.1.0" />
-    <PackageReference Include="System.Interactive.Async" Version="4.0.0" />
+    <!-- Pinned to the 2.x line to match JKang.IpcServiceFramework.Server, which has no 3.x release -->
+    <PackageReference Include="JKang.IpcServiceFramework.Client" Version="2.3.1" />
+    <!-- JKang.IpcServiceFramework.Core 2.3.1 pins a vulnerable Newtonsoft.Json 10.0.3 floor (GHSA-5crp-9r3c-p9vr); pin a patched version directly -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
+    <PackageReference Include="Scrutor" Version="7.0.0" />
+    <PackageReference Include="System.Interactive.Async" Version="7.0.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\TestFtpServer.Api\TestFtpServer.Api.csproj" />

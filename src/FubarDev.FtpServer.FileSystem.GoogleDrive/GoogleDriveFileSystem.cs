@@ -341,9 +341,9 @@ namespace FubarDev.FtpServer.FileSystem.GoogleDrive
 
             var newItemValues = new File()
             {
-                ModifiedTime = modify?.UtcDateTime,
-                CreatedTime = create?.UtcDateTime,
-                ViewedByMeTime = access?.UtcDateTime,
+                ModifiedTimeDateTimeOffset = modify,
+                CreatedTimeDateTimeOffset = create,
+                ViewedByMeTimeDateTimeOffset = access,
             };
 
             var request = Service.Files.Update(newItemValues, item.Id);

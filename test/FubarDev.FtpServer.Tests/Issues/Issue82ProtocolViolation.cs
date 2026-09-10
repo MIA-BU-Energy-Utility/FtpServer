@@ -31,7 +31,7 @@ namespace FubarDev.FtpServer.Tests.Issues
                 tasks.Add(task);
             }
 
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            await Task.WhenAll(tasks);
         }
 
         [Fact]
@@ -47,7 +47,13 @@ namespace FubarDev.FtpServer.Tests.Issues
         private async Task<IList<string>> GetFilesAsync()
         {
             var requestUri = $"ftp://127.0.0.1:{Server.Port}";
+
+            // WebRequest/FtpWebRequest is obsolete (SYSLIB0014), but this test exercises the raw
+            // FTP wire protocol handling that reproduces issue 82; HttpClient has no ftp:// support,
+            // and a higher-level FTP client would mask the exact protocol interaction under test.
+#pragma warning disable SYSLIB0014
             var request = (FtpWebRequest)WebRequest.Create(requestUri);
+#pragma warning restore SYSLIB0014
             request.Method = WebRequestMethods.Ftp.ListDirectory;
             request.Credentials = new NetworkCredential("anonymous", "foo@bar.com");
             request.KeepAlive = false;

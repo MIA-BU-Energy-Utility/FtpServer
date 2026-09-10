@@ -57,10 +57,10 @@ namespace FubarDev.FtpServer.FileSystem.GoogleDrive
         public IUnixPermissions Permissions { get; }
 
         /// <inheritdoc/>
-        public DateTimeOffset? LastWriteTime => File.ModifiedByMeTime ?? File.ModifiedTime ?? File.CreatedTime;
+        public DateTimeOffset? LastWriteTime => File.ModifiedByMeTimeDateTimeOffset ?? File.ModifiedTimeDateTimeOffset ?? File.CreatedTimeDateTimeOffset;
 
         /// <inheritdoc/>
-        public DateTimeOffset? CreatedTime => File.CreatedTime;
+        public DateTimeOffset? CreatedTime => File.CreatedTimeDateTimeOffset;
 
         /// <inheritdoc/>
         public long NumberOfLinks { get; }

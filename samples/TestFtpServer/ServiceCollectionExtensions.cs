@@ -174,8 +174,9 @@ namespace TestFtpServer
                        .AddFtpServer(sb => sb.ConfigureAuthentication(options).UseGoogleDrive(userCredential).ConfigureServer(options));
                     break;
                 case FileSystemType.GoogleDriveService:
-                    var serviceCredential = GoogleCredential
-                       .FromFile(options.GoogleDrive.Service.CredentialFile)
+                    var serviceCredential = CredentialFactory
+                       .FromFile<ServiceAccountCredential>(options.GoogleDrive.Service.CredentialFile)
+                       .ToGoogleCredential()
                        .CreateScoped(DriveService.Scope.Drive, DriveService.Scope.DriveFile);
                     services = services
                        .AddFtpServer(sb => sb.ConfigureAuthentication(options).UseGoogleDrive(serviceCredential).ConfigureServer(options));
@@ -290,7 +291,7 @@ namespace TestFtpServer
             UserCredential credential;
             using (var secretsSource = new FileStream(clientSecretsFile, FileMode.Open))
             {
-                var secrets = GoogleClientSecrets.Load(secretsSource);
+                var secrets = GoogleClientSecrets.FromStream(secretsSource);
                 credential = GoogleWebAuthorizationBroker.AuthorizeAsync(
                         secrets.Secrets,
                         new[] { DriveService.Scope.DriveFile, DriveService.Scope.Drive },
