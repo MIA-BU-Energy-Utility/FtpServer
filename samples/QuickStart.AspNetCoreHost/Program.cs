@@ -10,8 +10,8 @@ using System.Threading.Tasks;
 
 using FubarDev.FtpServer;
 
-using Microsoft.AspNetCore;
-using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -21,22 +21,26 @@ namespace QuickStart.AspNetCoreHost
     {
         public static void Main(string[] args)
         {
-            CreateWebHostBuilder(args).Build().Run();
-        }
+            var builder = WebApplication.CreateBuilder(args);
 
-        public static IWebHostBuilder CreateWebHostBuilder(string[] args) =>
-            WebHost.CreateDefaultBuilder(args)
-               .ConfigureServices(
-                    services =>
-                    {
-                        services
-                           .AddFtpServer(
-                                builder => builder
-                                   .UseDotNetFileSystem()
-                                   .EnableAnonymousAuthentication())
-                           .AddHostedService<HostedFtpService>();
-                    })
-                .UseStartup<Startup>();
+            builder.Services
+               .AddFtpServer(
+                    ftpBuilder => ftpBuilder
+                       .UseDotNetFileSystem()
+                       .EnableAnonymousAuthentication())
+               .AddHostedService<HostedFtpService>();
+
+            var app = builder.Build();
+
+            if (app.Environment.IsDevelopment())
+            {
+                app.UseDeveloperExceptionPage();
+            }
+
+            app.Run(context => context.Response.WriteAsync("Hello World!"));
+
+            app.Run();
+        }
 
         /// <summary>
         /// Generic host for the FTP server.

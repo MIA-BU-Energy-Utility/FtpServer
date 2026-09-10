@@ -2,7 +2,7 @@
 // Copyright (c) Fubar Development Junker. All rights reserved.
 // </copyright>
 
-using Microsoft.DotNet.PlatformAbstractions;
+using System.Runtime.InteropServices;
 
 using Xunit;
 
@@ -32,9 +32,9 @@ namespace FubarDev.FtpServer.Tests
 
         // Will fail under .NET Framework
         // [InlineData(@" \.\a", @"\ \.\a")]
-        public void TestRootRemovalWindows(string expected, string input)
+        public void TestRootRemovalWindows(string? expected, string? input)
         {
-            Skip.If(RuntimeEnvironment.OperatingSystemPlatform != Platform.Windows, "Works only on Windows");
+            Skip.IfNot(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "Works only on Windows");
             Assert.Equal(expected, input.RemoveRoot());
         }
 
@@ -44,9 +44,9 @@ namespace FubarDev.FtpServer.Tests
         [InlineData("a", "a")]
         [InlineData("a", "/a")]
         [InlineData("a", "//a")]
-        public void TestRootRemovalNonWindows(string expected, string input)
+        public void TestRootRemovalNonWindows(string? expected, string? input)
         {
-            Skip.If(RuntimeEnvironment.OperatingSystemPlatform == Platform.Windows, "Works only on non-Windows platforms");
+            Skip.If(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "Works only on non-Windows platforms");
             Assert.Equal(expected, input.RemoveRoot());
         }
     }

@@ -5,6 +5,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
 using Org.BouncyCastle.Crypto;
@@ -34,7 +35,7 @@ namespace TestFtpServer
 
             if (!string.IsNullOrEmpty(options.Ftps.Certificate))
             {
-                using (var cert = new X509Certificate2(options.Ftps.Certificate, options.Ftps.Password))
+                using (var cert = LoadCertificate(options.Ftps.Certificate, options.Ftps.Password))
                 {
                     if (!cert.HasPrivateKey && string.IsNullOrEmpty(options.Ftps.PrivateKey))
                     {
@@ -95,7 +96,7 @@ namespace TestFtpServer
                 return null;
             }
 
-            var cert = new X509Certificate2(options.Ftps.Certificate, options.Ftps.Password);
+            var cert = LoadCertificate(options.Ftps.Certificate, options.Ftps.Password);
             if (cert.HasPrivateKey)
             {
                 return cert;
@@ -103,8 +104,7 @@ namespace TestFtpServer
 
             cert.Dispose();
 
-            var certCollection = new X509Certificate2Collection();
-            certCollection.Import(options.Ftps.Certificate, options.Ftps.Password, X509KeyStorageFlags.Exportable);
+            var certCollection = LoadCertificateCollection(options.Ftps.Certificate, options.Ftps.Password);
 
             var passwordFinder = string.IsNullOrEmpty(options.Ftps.Password)
                 ? (IPasswordFinder?)null
@@ -135,7 +135,33 @@ namespace TestFtpServer
             }
 
             var result = Pkcs12Utilities.ConvertToDefiniteLength(data);
-            return new X509Certificate2(result);
+            return X509CertificateLoader.LoadPkcs12(result, string.Empty);
+        }
+
+        private static X509Certificate2 LoadCertificate(string path, string? password)
+        {
+            try
+            {
+                return X509CertificateLoader.LoadPkcs12FromFile(path, password);
+            }
+            catch (CryptographicException)
+            {
+                return X509CertificateLoader.LoadCertificateFromFile(path);
+            }
+        }
+
+        private static X509Certificate2Collection LoadCertificateCollection(string path, string? password)
+        {
+            try
+            {
+                return X509CertificateLoader.LoadPkcs12CollectionFromFile(path, password, X509KeyStorageFlags.Exportable);
+            }
+            catch (CryptographicException)
+            {
+                var collection = new X509Certificate2Collection();
+                collection.ImportFromPemFile(path);
+                return collection;
+            }
         }
 
         private class BcStaticPassword : IPasswordFinder
