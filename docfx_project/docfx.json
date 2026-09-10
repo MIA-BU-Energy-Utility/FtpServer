@@ -1,4 +1,5 @@
 {
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
   "metadata": [
     {
       "src": [
@@ -12,7 +13,7 @@
           ]
         }
       ],
-      "dest": "api",
+      "output": "api",
       "disableGitFeatures": false,
       "properties": {
         "TargetFramework": "netstandard2.0"
@@ -54,18 +55,11 @@
         ]
       }
     ],
-    "dest": "../docs",
-    "xrefService": [ "https://xref.docs.microsoft.com/query?uid={uid}" ],
-    "globalMetadataFiles": [],
-    "fileMetadataFiles": [],
+    "output": "../docs",
     "template": [
-      "default"
+      "default",
+      "modern"
     ],
-    "postProcessors": [],
-    "markdownEngineName": "markdig",
-    "noLangKeyword": false,
-    "keepFileLink": false,
-    "cleanupCacheHistory": false,
     "disableGitFeatures": false,
     "globalMetadata": {
       "_appTitle": "FTP Server documentation",

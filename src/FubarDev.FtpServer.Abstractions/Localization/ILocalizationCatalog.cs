@@ -4,6 +4,9 @@
 
 namespace FubarDev.FtpServer.Localization
 {
+    /// <summary>
+    /// Translates texts for a specific culture.
+    /// </summary>
     public interface ILocalizationCatalog
     {
         /// <summary>Translate <paramref name="text"/>.</summary>
