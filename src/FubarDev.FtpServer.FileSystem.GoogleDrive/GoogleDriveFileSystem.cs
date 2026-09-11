@@ -383,10 +383,10 @@ namespace FubarDev.FtpServer.FileSystem.GoogleDrive
                 _uploadsLock.Wait();
                 try
                 {
-                _uploads.Remove(fileId);
-            }
-            finally
-            {
+                    _uploads.Remove(fileId);
+                }
+                finally
+                {
                     _uploadsLock.Release();
                 }
             }

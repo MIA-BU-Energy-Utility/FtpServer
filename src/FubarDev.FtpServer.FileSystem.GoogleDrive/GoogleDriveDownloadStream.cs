@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace FubarDev.FtpServer.FileSystem.GoogleDrive
 {
-   /// <summary>
+    /// <summary>
     /// Encapsulation of a <see cref="HttpWebResponse"/> stream.
     /// </summary>
     internal class GoogleDriveDownloadStream : Stream

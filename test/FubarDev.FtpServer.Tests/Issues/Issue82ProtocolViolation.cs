@@ -1,4 +1,4 @@
-﻿// <copyright file="Issue82ProtocolViolation.cs" company="Fubar Development Junker">
+// <copyright file="Issue82ProtocolViolation.cs" company="Fubar Development Junker">
 // Copyright (c) Fubar Development Junker. All rights reserved.
 // </copyright>
 
