@@ -45,11 +45,11 @@ namespace FubarDev.FtpServer
                             result.AddRange(DataReceived(data.Slice(index, 1)));
                             break;
                         case 0xFB:
-                            // WILL
+                        // WILL
                         case 0xFC:
-                            // WON'T
+                        // WON'T
                         case 0xFD:
-                            // DO
+                        // DO
                         case 0xFE:
                             // DON'T
                             _interpretAsCommandReceived = true;

@@ -71,20 +71,20 @@ namespace FubarDev.FtpServer
                         break;
 
                     case FileSystemException fse:
-                    {
-                        var message = fse.Message != null ? $"{fse.FtpErrorName}: {fse.Message}" : fse.FtpErrorName;
-                        logger?.LogInformation("Rejected command ({command}) with error {code} {message}", command, fse.FtpErrorCode, message);
-                        response = new FtpResponse(fse.FtpErrorCode, message);
-                        break;
-                    }
+                        {
+                            var message = fse.Message != null ? $"{fse.FtpErrorName}: {fse.Message}" : fse.FtpErrorName;
+                            logger?.LogInformation("Rejected command ({command}) with error {code} {message}", command, fse.FtpErrorCode, message);
+                            response = new FtpResponse(fse.FtpErrorCode, message);
+                            break;
+                        }
 
                     case NotSupportedException nse:
-                    {
-                        var message = nse.Message ?? localizationFeature.Catalog.GetString("Command {command} not supported", command);
-                        logger?.LogInformation(message);
-                        response = new FtpResponse(502, message);
-                        break;
-                    }
+                        {
+                            var message = nse.Message ?? localizationFeature.Catalog.GetString("Command {command} not supported", command);
+                            logger?.LogInformation(message);
+                            response = new FtpResponse(502, message);
+                            break;
+                        }
 
                     default:
                         logger?.LogError(0, ex, "Failed to process message ({command})", command);

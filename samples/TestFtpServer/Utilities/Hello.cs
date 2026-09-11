@@ -3,6 +3,7 @@
 // </copyright>
 
 using System.Collections.Generic;
+
 using FubarDev.FtpServer;
 
 namespace TestFtpServer.Utilities
@@ -26,7 +27,7 @@ namespace TestFtpServer.Utilities
             {
                 if (_greetedPersons.Count == 0)
                 {
-                    response = new FtpResponse(200,"Hello, World!");
+                    response = new FtpResponse(200, "Hello, World!");
                 }
                 else
                 {
@@ -41,11 +42,11 @@ namespace TestFtpServer.Utilities
             {
                 if (!_greetedPersons.Add(name!))
                 {
-                    response = new FtpResponse(200,$"Hello again, {name}!");
+                    response = new FtpResponse(200, $"Hello again, {name}!");
                 }
                 else
                 {
-                    response = new FtpResponse(200,$"Hello, {name}!");
+                    response = new FtpResponse(200, $"Hello, {name}!");
                 }
             }
 

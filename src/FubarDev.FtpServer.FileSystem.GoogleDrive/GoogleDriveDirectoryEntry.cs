@@ -10,7 +10,7 @@ using Google.Apis.Drive.v3.Data;
 
 namespace FubarDev.FtpServer.FileSystem.GoogleDrive
 {
-   /// <summary>
+    /// <summary>
     /// Implementation of <see cref="IUnixDirectoryEntry"/> for Google Drive.
     /// </summary>
     internal class GoogleDriveDirectoryEntry : IUnixDirectoryEntry

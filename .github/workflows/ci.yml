@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  build:
+    name: Build (Release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore FubarDev.FtpServer.sln
+
+      - name: Build
+        run: dotnet build FubarDev.FtpServer.sln --configuration Release --no-restore
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore FubarDev.FtpServer.sln
+
+      - name: Test
+        run: dotnet test test/FubarDev.FtpServer.Tests/FubarDev.FtpServer.Tests.csproj --configuration Debug --no-restore --logger "console;verbosity=normal"
+
+  format-check:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore FubarDev.FtpServer.sln
+
+      - name: Verify formatting
+        run: dotnet format FubarDev.FtpServer.sln --verify-no-changes --no-restore

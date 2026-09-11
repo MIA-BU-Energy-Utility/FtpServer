@@ -1,4 +1,4 @@
-﻿// <copyright file="FtpConnectionIdleCheckInactivityOptions.cs" company="Fubar Development Junker">
+// <copyright file="FtpConnectionIdleCheckInactivityOptions.cs" company="Fubar Development Junker">
 // Copyright (c) Fubar Development Junker. All rights reserved.
 // </copyright>
 
