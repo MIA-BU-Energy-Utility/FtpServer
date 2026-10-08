@@ -34,7 +34,10 @@ namespace FubarDev.FtpServer
         public static IFtpServerBuilder EnableIdleCheck(
             this IFtpServerBuilder builder)
         {
-            builder.Services.AddSingleton<IFtpConnectionCheck, FtpConnectionIdleCheck>();
+            // Scoped (not singleton): the check holds per-connection state (last activity
+            // time, active data transfers) and subscribes to one connection's events, so a
+            // single shared instance would only ever track the first connection.
+            builder.Services.AddScoped<IFtpConnectionCheck, FtpConnectionIdleCheck>();
             return builder;
         }
 
