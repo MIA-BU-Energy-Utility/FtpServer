@@ -52,6 +52,11 @@ namespace FubarDev.FtpServer
         public int Port { get; private set; }
 
         /// <summary>
+        /// Gets or sets a test seam for simulating accept-time failures/results deterministically.
+        /// </summary>
+        internal Func<TcpListener, Task<TcpClient>>? AcceptTcpClientOverride { get; set; }
+
+        /// <summary>
         /// Start all listeners.
         /// </summary>
         /// <returns>the task.</returns>
@@ -176,12 +181,28 @@ namespace FubarDev.FtpServer
         {
             try
             {
-                var client = await listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                var acceptTask = AcceptTcpClientOverride?.Invoke(listener) ?? listener.AcceptTcpClientAsync();
+                var client = await acceptTask.ConfigureAwait(false);
                 return new AcceptInfo(client, index);
             }
             catch (ObjectDisposedException)
             {
                 // Ignore the exception. This happens when the listener gets stopped.
+                return new AcceptInfo(null, index);
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
+            {
+                // The remote peer reset/aborted the connection (e.g. a TCP health probe) while
+                // it was still being accepted. This is a per-client failure, not a listener
+                // failure, and happens routinely, so we log it at Debug and let the caller
+                // re-arm the acceptor instead of tearing down the whole listener. Any other
+                // SocketException (e.g. SocketError.TooManyOpenSockets) indicates a listener-level
+                // problem and is left to propagate.
+                _logger?.LogDebug(
+                    ex,
+                    "Accepting a client on listener {index} failed with socket error {socketError}. Continuing to accept further clients.",
+                    index,
+                    ex.SocketErrorCode);
                 return new AcceptInfo(null, index);
             }
         }
