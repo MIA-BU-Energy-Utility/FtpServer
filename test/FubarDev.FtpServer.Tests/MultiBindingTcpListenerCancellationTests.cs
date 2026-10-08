@@ -26,6 +26,26 @@ namespace FubarDev.FtpServer.Tests
         private const BindingFlags AllInstanceMembers =
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance;
 
+        /// <summary>
+        /// Sanity-checks <see cref="CountCancellationRegistrations"/> itself: if the BCL ever
+        /// changes <see cref="CancellationTokenSource"/>'s internal representation in a way that
+        /// breaks the reflection in that helper, this must fail loudly here instead of silently
+        /// making <see cref="WaitAnyTcpClientAsyncDoesNotLeakCancellationRegistrationsAsync"/>
+        /// report zero leaked registrations for the wrong reason.
+        /// </summary>
+        [Fact]
+        public void CountCancellationRegistrationsDetectsOutstandingRegistration()
+        {
+            using var cts = new CancellationTokenSource();
+            Assert.Equal(0, CountCancellationRegistrations(cts));
+
+            var registration = cts.Token.Register(() => { });
+            Assert.Equal(1, CountCancellationRegistrations(cts));
+
+            registration.Dispose();
+            Assert.Equal(0, CountCancellationRegistrations(cts));
+        }
+
         [Fact]
         public async Task WaitAnyTcpClientAsyncDoesNotLeakCancellationRegistrationsAsync()
         {
