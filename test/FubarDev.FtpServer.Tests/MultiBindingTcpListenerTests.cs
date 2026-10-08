@@ -70,5 +70,37 @@ namespace FubarDev.FtpServer.Tests
                 listener.Stop();
             }
         }
+
+        // A SocketException that is not one of the known per-client accept failures (e.g.
+        // SocketError.TooManyOpenSockets, which indicates the process is out of file
+        // descriptors) is a listener-level problem, not a transient per-connection one.
+        // Silently swallowing and retrying it would turn a persistent failure into a hot
+        // spin loop instead of surfacing it, so it must still propagate.
+        [Fact]
+        public async Task WaitAnyTcpClientAsync_NonPerClientSocketException_Propagates()
+        {
+            var listener = new MultiBindingTcpListener(IPAddress.Loopback.ToString(), 0);
+
+            listener.AcceptTcpClientOverride =
+                _ => throw new SocketException((int)SocketError.TooManyOpenSockets);
+
+            await listener.StartAsync();
+            listener.StartAccepting();
+
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+                var aggregate = await Assert.ThrowsAsync<AggregateException>(
+                    () => listener.WaitAnyTcpClientAsync(cts.Token));
+
+                var socketException = Assert.IsType<SocketException>(aggregate.InnerException);
+                Assert.Equal(SocketError.TooManyOpenSockets, socketException.SocketErrorCode);
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        }
     }
 }
