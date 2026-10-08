@@ -117,8 +117,14 @@ namespace FubarDev.FtpServer
         /// <returns>The new TCP client.</returns>
         public async Task<TcpClient> WaitAnyTcpClientAsync(CancellationToken token)
         {
+            // Use a linked token source so the Task.Delay registration on the
+            // (potentially long-lived) incoming token is released when this
+            // call returns, instead of staying registered until that token
+            // is eventually cancelled.
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
             // The task that just waits indefinitely for a triggered cancellation token
-            var cancellationTask = Task.Delay(-1, token);
+            var cancellationTask = Task.Delay(-1, linkedCts.Token);
 
             // Build the list of awaitable tasks
             var tasks = new Task[_acceptors.Length + 1];
@@ -127,41 +133,51 @@ namespace FubarDev.FtpServer
             // Add the cancellation task as last task
             tasks[_acceptors.Length] = cancellationTask;
 
-            TcpClient? result;
-            do
+            try
             {
-                // Wait for any task to be finished
-                var retVal = await Task.WhenAny(tasks).ConfigureAwait(false);
+                TcpClient? result;
+                do
+                {
+                    // Wait for any task to be finished
+                    var retVal = await Task.WhenAny(tasks).ConfigureAwait(false);
 
-                // Test if the cancellation token was triggered
-                token.ThrowIfCancellationRequested();
+                    // Test if the cancellation token was triggered
+                    token.ThrowIfCancellationRequested();
 
-                // It was a listener task when the cancellation token was not triggered
+                    // It was a listener task when the cancellation token was not triggered
 #if NETSTANDARD1_3
-                var acceptInfo = await ((Task<AcceptInfo>)retVal).ConfigureAwait(false);
+                    var acceptInfo = await ((Task<AcceptInfo>)retVal).ConfigureAwait(false);
 #else
-                var acceptInfo = ((Task<AcceptInfo>)retVal).Result;
-                retVal.Dispose();
+                    var acceptInfo = ((Task<AcceptInfo>)retVal).Result;
+                    retVal.Dispose();
 #endif
 
-                // Avoid indexed access into the list of acceptors
-                var index = acceptInfo.Index;
+                    // Avoid indexed access into the list of acceptors
+                    var index = acceptInfo.Index;
 
-                // Gets the result of the finished task.
-                result = acceptInfo.Client;
+                    // Gets the result of the finished task.
+                    result = acceptInfo.Client;
 
-                // Start accepting the next TCP client for the
-                // listener whose task was finished.
-                var listener = _listeners[index];
-                var newAcceptor = AcceptForListenerAsync(listener, index);
+                    // Start accepting the next TCP client for the
+                    // listener whose task was finished.
+                    var listener = _listeners[index];
+                    var newAcceptor = AcceptForListenerAsync(listener, index);
 
-                // Start accepting the next TCP client for the
-                // listener whose task was finished.
-                tasks[index] = _acceptors[index] = newAcceptor;
+                    // Start accepting the next TCP client for the
+                    // listener whose task was finished.
+                    tasks[index] = _acceptors[index] = newAcceptor;
+                }
+                while (result == null);
+
+                return result;
             }
-            while (result == null);
-
-            return result;
+            finally
+            {
+                // Release the Task.Delay registration on the linked token
+                // immediately, instead of leaking it until the original
+                // token is cancelled.
+                linkedCts.Cancel();
+            }
         }
 
         /// <summary>
