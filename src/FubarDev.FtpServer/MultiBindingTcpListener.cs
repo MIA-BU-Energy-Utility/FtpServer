@@ -12,6 +12,8 @@ using System.Threading.Tasks;
 
 using Microsoft.Extensions.Logging;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("FubarDev.FtpServer.Tests")]
+
 namespace FubarDev.FtpServer
 {
     /// <summary>
@@ -50,6 +52,14 @@ namespace FubarDev.FtpServer
         /// Gets the port this listener is bound to.
         /// </summary>
         public int Port { get; private set; }
+
+        /// <summary>
+        /// Gets or sets a test seam: when set, invoked instead of
+        /// <see cref="TcpListener.AcceptTcpClientAsync()"/> so tests can deterministically
+        /// simulate a transient accept-time failure (e.g. a client resetting the connection
+        /// during the handshake) without relying on OS-level socket races.
+        /// </summary>
+        internal Func<TcpListener, Task<TcpClient>>? AcceptTcpClientOverride { get; set; }
 
         /// <summary>
         /// Start all listeners.
@@ -176,12 +186,27 @@ namespace FubarDev.FtpServer
         {
             try
             {
-                var client = await listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                var acceptTask = AcceptTcpClientOverride?.Invoke(listener) ?? listener.AcceptTcpClientAsync();
+                var client = await acceptTask.ConfigureAwait(false);
                 return new AcceptInfo(client, index);
             }
             catch (ObjectDisposedException)
             {
                 // Ignore the exception. This happens when the listener gets stopped.
+                return new AcceptInfo(null, index);
+            }
+            catch (SocketException ex)
+            {
+                // A client may abort the connection (e.g. RST) while it is still being
+                // accepted, which surfaces here as a SocketException instead of a usable
+                // client. This is a per-connection failure, not a listener failure, so we
+                // log it and let the caller re-arm the acceptor instead of tearing down
+                // the whole listener.
+                _logger?.LogWarning(
+                    ex,
+                    "Accepting a client on listener {index} failed with socket error {socketError}. Continuing to accept further clients.",
+                    index,
+                    ex.SocketErrorCode);
                 return new AcceptInfo(null, index);
             }
         }
