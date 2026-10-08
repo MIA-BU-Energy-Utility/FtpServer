@@ -122,8 +122,11 @@ namespace FubarDev.FtpServer
         /// <returns>The new TCP client.</returns>
         public async Task<TcpClient> WaitAnyTcpClientAsync(CancellationToken token)
         {
+            // Linked so disposing it releases the registration on the (potentially long-lived) incoming token.
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
             // The task that just waits indefinitely for a triggered cancellation token
-            var cancellationTask = Task.Delay(-1, token);
+            var cancellationTask = Task.Delay(-1, linkedCts.Token);
 
             // Build the list of awaitable tasks
             var tasks = new Task[_acceptors.Length + 1];
