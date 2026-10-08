@@ -360,108 +360,9 @@ namespace FubarDev.FtpServer
         }
 
         /// <inheritdoc />
-        public async Task StopAsync()
+        public Task StopAsync()
         {
-            var success = await _stopSemaphore.WaitAsync(0, CancellationToken.None)
-               .ConfigureAwait(false);
-            if (!success)
-            {
-                // Handles recursion caused by CommandChannelDispatcherAsync.
-                return;
-            }
-
-            try
-            {
-                _logger?.LogTrace("StopAsync called");
-
-                await _serviceControl.WaitAsync(CancellationToken.None)
-                   .ConfigureAwait(false);
-                try
-                {
-                    if (Interlocked.CompareExchange(ref _connectionClosed, 1, 0) != 0)
-                    {
-                        return;
-                    }
-
-                    var currentUser = _authorizationInformationFeature.FtpUser;
-                    var membershipProvider = _authorizationInformationFeature.MembershipProvider;
-                    if (currentUser != null
-                        && membershipProvider is IMembershipProviderAsync membershipProviderAsync)
-                    {
-                        await membershipProviderAsync.LogOutAsync(currentUser, CancellationToken.None)
-                           .ConfigureAwait(false);
-                    }
-
-                    Abort();
-
-                    try
-                    {
-                        _serverCommandChannel.Writer.Complete();
-                        await _commandReader.ConfigureAwait(false);
-
-                        if (_commandChannelReader != null)
-                        {
-                            await _commandChannelReader.ConfigureAwait(false);
-                        }
-
-                        if (_serverCommandHandler != null)
-                        {
-                            await _serverCommandHandler.ConfigureAwait(false);
-                        }
-
-                        await _networkStreamFeature.SecureConnectionAdapter.StopAsync(CancellationToken.None)
-                           .ConfigureAwait(false);
-                        await _streamReaderService.StopAsync(CancellationToken.None)
-                           .ConfigureAwait(false);
-                        await _streamWriterService.StopAsync(CancellationToken.None)
-                           .ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Something went wrong... badly!
-                        _logger?.LogError(ex, "Failed to stop the client connection: {ErrorMessage}", ex.Message);
-                    }
-
-                    // Dispose all features (if disposable)
-                    foreach (var featureItem in Features)
-                    {
-                        try
-                        {
-                            switch (featureItem.Value)
-                            {
-                                case IFtpConnection _:
-                                    // Never dispose the connection itself.
-                                    break;
-                                case IFtpDataConnectionFeature feature:
-                                    await feature.DisposeAsync().ConfigureAwait(false);
-                                    break;
-                                case IDisposable disposable:
-                                    disposable.Dispose();
-                                    break;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // Ignore exceptions
-                            _logger?.LogWarning(ex, "Failed to dispose feature of type {featureType}: {errorMessage}", featureItem.Key, ex.Message);
-                        }
-
-                        Features[featureItem.Key] = null;
-                    }
-
-                    _logger?.LogInformation("Connection closed");
-                }
-                finally
-                {
-                    _serviceControl.Release();
-                }
-            }
-            finally
-            {
-                _stopSemaphore.Release();
-            }
-
-            OnClosed();
+            return StopAsync(calledFromDispatcher: false);
         }
 
         /// <summary>
@@ -770,6 +671,111 @@ namespace FubarDev.FtpServer
             }
         }
 
+        private async Task StopAsync(bool calledFromDispatcher)
+        {
+            var success = await _stopSemaphore.WaitAsync(0, CancellationToken.None)
+               .ConfigureAwait(false);
+            if (!success)
+            {
+                // Handles recursion caused by CommandChannelDispatcherAsync.
+                return;
+            }
+
+            try
+            {
+                _logger?.LogTrace("StopAsync called");
+
+                await _serviceControl.WaitAsync(CancellationToken.None)
+                   .ConfigureAwait(false);
+                try
+                {
+                    if (Interlocked.CompareExchange(ref _connectionClosed, 1, 0) != 0)
+                    {
+                        return;
+                    }
+
+                    var currentUser = _authorizationInformationFeature.FtpUser;
+                    var membershipProvider = _authorizationInformationFeature.MembershipProvider;
+                    if (currentUser != null
+                        && membershipProvider is IMembershipProviderAsync membershipProviderAsync)
+                    {
+                        await membershipProviderAsync.LogOutAsync(currentUser, CancellationToken.None)
+                           .ConfigureAwait(false);
+                    }
+
+                    Abort();
+
+                    try
+                    {
+                        _serverCommandChannel.Writer.Complete();
+                        await _commandReader.ConfigureAwait(false);
+
+                        // The dispatcher calls us from its own finally block and must not await itself.
+                        if (_commandChannelReader != null && !calledFromDispatcher)
+                        {
+                            await _commandChannelReader.ConfigureAwait(false);
+                        }
+
+                        if (_serverCommandHandler != null)
+                        {
+                            await _serverCommandHandler.ConfigureAwait(false);
+                        }
+
+                        await _networkStreamFeature.SecureConnectionAdapter.StopAsync(CancellationToken.None)
+                           .ConfigureAwait(false);
+                        await _streamReaderService.StopAsync(CancellationToken.None)
+                           .ConfigureAwait(false);
+                        await _streamWriterService.StopAsync(CancellationToken.None)
+                           .ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Something went wrong... badly!
+                        _logger?.LogError(ex, "Failed to stop the client connection: {ErrorMessage}", ex.Message);
+                    }
+
+                    // Dispose all features (if disposable)
+                    foreach (var featureItem in Features)
+                    {
+                        try
+                        {
+                            switch (featureItem.Value)
+                            {
+                                case IFtpConnection _:
+                                    // Never dispose the connection itself.
+                                    break;
+                                case IFtpDataConnectionFeature feature:
+                                    await feature.DisposeAsync().ConfigureAwait(false);
+                                    break;
+                                case IDisposable disposable:
+                                    disposable.Dispose();
+                                    break;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Ignore exceptions
+                            _logger?.LogWarning(ex, "Failed to dispose feature of type {featureType}: {errorMessage}", featureItem.Key, ex.Message);
+                        }
+
+                        Features[featureItem.Key] = null;
+                    }
+
+                    _logger?.LogInformation("Connection closed");
+                }
+                finally
+                {
+                    _serviceControl.Release();
+                }
+            }
+            finally
+            {
+                _stopSemaphore.Release();
+            }
+
+            OnClosed();
+        }
+
         private async Task CommandChannelDispatcherAsync(ChannelReader<FtpCommand> commandReader, CancellationToken cancellationToken)
         {
             // Initialize middleware objects
@@ -846,9 +852,7 @@ namespace FubarDev.FtpServer
             }
             finally
             {
-                // We must set this to null to avoid a deadlock.
-                _commandChannelReader = null;
-                await StopAsync().ConfigureAwait(false);
+                await StopAsync(calledFromDispatcher: true).ConfigureAwait(false);
             }
         }
 
