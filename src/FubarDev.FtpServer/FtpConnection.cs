@@ -442,7 +442,9 @@ namespace FubarDev.FtpServer
             //
             // We really need to clean up this mess!
             // Dispose all features (if disposable)
-            foreach (var featureItem in Features)
+            // Snapshot first: disposing a feature may itself mutate Features (e.g. via Features.Set),
+            // and mutating a collection while enumerating it throws.
+            foreach (var featureItem in Features.ToList())
             {
                 try
                 {
@@ -735,7 +737,9 @@ namespace FubarDev.FtpServer
                     }
 
                     // Dispose all features (if disposable)
-                    foreach (var featureItem in Features)
+                    // Snapshot first: disposing a feature may itself mutate Features (e.g. via Features.Set),
+                    // and mutating a collection while enumerating it throws.
+                    foreach (var featureItem in Features.ToList())
                     {
                         try
                         {
