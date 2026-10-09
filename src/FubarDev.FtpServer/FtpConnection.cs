@@ -338,7 +338,7 @@ namespace FubarDev.FtpServer
 
                 // Connection information
                 var connectionFeature = Features.Get<IConnectionFeature>();
-                _logger?.LogInformation("Connected from {remoteIp}", connectionFeature.RemoteEndPoint);
+                _logger?.LogDebug("Connected from {remoteIp}", connectionFeature.RemoteEndPoint);
 
                 await _streamWriterService.StartAsync(CancellationToken.None)
                    .ConfigureAwait(false);
@@ -765,7 +765,7 @@ namespace FubarDev.FtpServer
                         Features[featureItem.Key] = null;
                     }
 
-                    _logger?.LogInformation("Connection closed");
+                    _logger?.LogDebug("Connection closed");
                 }
                 finally
                 {
