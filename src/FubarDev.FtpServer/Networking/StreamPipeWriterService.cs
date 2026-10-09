@@ -73,17 +73,17 @@ namespace FubarDev.FtpServer.Networking
                     await SendDataToStream(readResult.Buffer, CancellationToken.None)
                        .ConfigureAwait(false);
                 }
-                catch (Exception ex) when (IsPeerClosedConnection(ex))
-                {
-                    // The client (e.g. a TCP health probe) aborted the connection while we were
-                    // writing to it. This is a client-initiated event, not a server problem, so
-                    // it's not worth more than a debug-level log entry.
-                    Logger?.LogDebug(ex, "Sending data failed. The remote peer closed the connection.");
-                    return;
-                }
                 catch (Exception ex)
                 {
-                    Logger?.LogWarning(ex, "Sending data failed {ErrorMessage}", ex.Message);
+                    // A closed/reset connection is a client-initiated event, not a server problem.
+                    if (IsPeerClosedConnection(ex))
+                    {
+                        Logger?.LogDebug(ex, "Sending data failed. The remote peer closed the connection.");
+                    }
+                    else
+                    {
+                        Logger?.LogWarning(ex, "Sending data failed {ErrorMessage}", ex.Message);
+                    }
 
                     // Ensure that the read operation is finished, but keep the data.
                     _pipeReader.AdvanceTo(readResult.Buffer.Start);
@@ -153,8 +153,7 @@ namespace FubarDev.FtpServer.Networking
         }
 
         /// <summary>
-        /// Determines whether <paramref name="ex"/> indicates that the remote peer closed or
-        /// aborted the connection while we were writing to it.
+        /// Determines whether <paramref name="ex"/> was caused by the remote peer closing the connection.
         /// </summary>
         /// <param name="ex">The exception to inspect.</param>
         /// <returns><see langword="true"/> if the exception was caused by the peer closing the connection.</returns>

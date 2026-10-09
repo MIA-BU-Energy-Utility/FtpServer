@@ -25,8 +25,7 @@ namespace FubarDev.FtpServer.Tests
     /// health probe) resets or aborts the connection while the server is writing to it (commonly
     /// while sending the 220 banner), the write fails with an <see cref="IOException"/> wrapping
     /// a <see cref="SocketException"/>. That is a client-initiated event, not a server problem, so
-    /// it should be logged at Debug level, not Warning - and the send loop should simply end
-    /// instead of rethrowing.
+    /// it should be logged at Debug level, not Warning.
     /// </summary>
     public class StreamPipeWriterServiceTests
     {
@@ -46,6 +45,15 @@ namespace FubarDev.FtpServer.Tests
 
             await service.StartAsync(CancellationToken.None);
             await WaitUntilStoppedAsync(service);
+
+            // The failed read result must have been advanced (not just abandoned) before
+            // ExecuteAsync gave up, or a later read on the same PipeReader - e.g. the one
+            // StopAsync's flush performs below - throws InvalidOperationException ("Reading is
+            // already in progress"), which is exactly the class of bug this guards against.
+            var stopTask = service.StopAsync(CancellationToken.None);
+            var completed = await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(stopTask, completed);
+            await stopTask;
 
             Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
             Assert.Contains(
