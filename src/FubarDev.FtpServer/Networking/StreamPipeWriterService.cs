@@ -6,6 +6,7 @@ using System;
 using System.Buffers;
 using System.IO;
 using System.IO.Pipelines;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -71,6 +72,14 @@ namespace FubarDev.FtpServer.Networking
                     // data might be lost.
                     await SendDataToStream(readResult.Buffer, CancellationToken.None)
                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (IsPeerClosedConnection(ex))
+                {
+                    // The client (e.g. a TCP health probe) aborted the connection while we were
+                    // writing to it. This is a client-initiated event, not a server problem, so
+                    // it's not worth more than a debug-level log entry.
+                    Logger?.LogDebug(ex, "Sending data failed. The remote peer closed the connection.");
+                    return;
                 }
                 catch (Exception ex)
                 {
@@ -141,6 +150,20 @@ namespace FubarDev.FtpServer.Networking
         protected virtual Task WriteToStreamAsync(byte[] buffer, int offset, int length, CancellationToken cancellationToken)
         {
             return Stream.WriteAsync(buffer, offset, length, cancellationToken);
+        }
+
+        /// <summary>
+        /// Determines whether <paramref name="ex"/> indicates that the remote peer closed or
+        /// aborted the connection while we were writing to it.
+        /// </summary>
+        /// <param name="ex">The exception to inspect.</param>
+        /// <returns><see langword="true"/> if the exception was caused by the peer closing the connection.</returns>
+        private static bool IsPeerClosedConnection(Exception ex)
+        {
+            return ex.InnerException is SocketException socketException
+                && (socketException.SocketErrorCode == SocketError.ConnectionReset
+                    || socketException.SocketErrorCode == SocketError.ConnectionAborted
+                    || socketException.SocketErrorCode == SocketError.Shutdown);
         }
 
         private async Task FlushAsync(
