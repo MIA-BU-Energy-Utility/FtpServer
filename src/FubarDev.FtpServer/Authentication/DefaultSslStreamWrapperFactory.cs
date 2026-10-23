@@ -62,7 +62,7 @@ namespace FubarDev.FtpServer.Authentication
             }
         }
 
-#if NETCOREAPP || NET47
+#if NETCOREAPP || NET47 || NETSTANDARD2_1
         /// <inheritdoc />
         public async Task CloseStreamAsync(Stream sslStream, CancellationToken cancellationToken)
         {
