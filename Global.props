@@ -1,7 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project>
-  <Import Project="DotNetSdkMono.props" />
-
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <VersionPrefix>3.0.0</VersionPrefix>
@@ -18,8 +16,7 @@
     <CodeAnalysisRuleSet>$(MSBuildThisFileDirectory)FubarDev.FtpServer.ruleset</CodeAnalysisRuleSet>
     <NoWarn>SA1636;SA1641;$(NoWarn)</NoWarn>
     <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
-    <Nullable Condition=" '$(TargetFramework)' == 'netstandard2.1' or '$(TargetFramework)' == 'netcoreapp3.0' ">enable</Nullable>
-    <Nullable Condition=" '$(TargetFramework)' != 'netcoreapp3.0' and '$(TargetFramework)' != 'netstandard2.1' ">annotations</Nullable>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,9 +26,5 @@
   <ItemGroup>
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)stylecop.json" Link="stylecop.json" Visible="false" />
   </ItemGroup>
-
-  <PropertyGroup Condition="'$(TargetFramework)'=='net461' or '$(TargetFramework)'=='net47'">
-    <DefineConstants>$(DefineConstants);NETFRAMEWORK</DefineConstants>
-  </PropertyGroup>
 
 </Project>
