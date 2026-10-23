@@ -176,8 +176,10 @@ namespace FubarDev.FtpServer.DataConnection
                 {
                     _client = client;
                     Stream = _client.GetStream();
-                    LocalAddress = (IPEndPoint)client.Client.LocalEndPoint;
-                    RemoteAddress = (IPEndPoint)client.Client.RemoteEndPoint;
+
+                    // A connected client always has both endpoints set.
+                    LocalAddress = (IPEndPoint)client.Client.LocalEndPoint!;
+                    RemoteAddress = (IPEndPoint)client.Client.RemoteEndPoint!;
                 }
 
                 /// <inheritdoc />
@@ -203,9 +205,7 @@ namespace FubarDev.FtpServer.DataConnection
                     _closed = true;
 
                     await Stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-#if !NETSTANDARD1_3
                     _client.Close();
-#endif
                     _client.Dispose();
                 }
             }
