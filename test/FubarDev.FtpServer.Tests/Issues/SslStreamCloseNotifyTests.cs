@@ -65,10 +65,13 @@ namespace FubarDev.FtpServer.Tests.Issues
                 leaveInnerStreamOpen: false,
                 userCertificateValidationCallback: (_, _, _, _) => true);
 
+            // Pin to TLS 1.2: under TLS 1.3, the close_notify alert is itself encrypted
+            // and travels inside an application_data record (content type 0x17), so the
+            // 0x15 (plaintext alert record) assertion below only holds for TLS 1.2.
             var clientAuthTask = clientSslStream.AuthenticateAsClientAsync(
                 "localhost",
                 clientCertificates: null,
-                enabledSslProtocols: System.Security.Authentication.SslProtocols.None,
+                enabledSslProtocols: System.Security.Authentication.SslProtocols.Tls12,
                 checkCertificateRevocation: false);
 
             var serverStream = await serverStreamTask.WaitAsync(cts.Token);
