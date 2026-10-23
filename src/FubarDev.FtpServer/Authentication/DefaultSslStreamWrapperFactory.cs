@@ -62,19 +62,32 @@ namespace FubarDev.FtpServer.Authentication
             }
         }
 
-#if NETCOREAPP || NET47
+#if NETCOREAPP || NET47 || NETSTANDARD2_1
         /// <inheritdoc />
         public async Task CloseStreamAsync(Stream sslStream, CancellationToken cancellationToken)
         {
             if (sslStream is SslStream s)
             {
-                await s.ShutdownAsync().ConfigureAwait(false);
+                try
+                {
+                    await s.ShutdownAsync().ConfigureAwait(false);
 
-                // Why is this needed? I get a GnuTLS error -110 when it's not called!
-                await Task.Yield();
+                    // Why is this needed? I get a GnuTLS error -110 when it's not called!
+                    await Task.Yield();
 
-                await s.FlushAsync(cancellationToken).ConfigureAwait(false);
-                s.Close();
+                    await s.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+                {
+                    // The peer may already have closed or reset the connection (e.g. an
+                    // FTP client aborting a transfer), so sending close_notify is
+                    // best-effort: closing the stream below must still happen.
+                    _logger?.LogDebug(0, ex, "Failed to send TLS close_notify");
+                }
+                finally
+                {
+                    s.Close();
+                }
             }
         }
 #else
