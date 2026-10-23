@@ -48,7 +48,7 @@ namespace FubarDev.FtpServer.AccountManagement.Directories.RootPerUser
                 return GetAnonymousDirectories(accountInformation.FtpUser);
             }
 
-            var rootPath = Path.Combine(_userRoot, accountInformation.FtpUser.Identity.Name);
+            var rootPath = Path.Combine(_userRoot, accountInformation.FtpUser.GetUserName());
             return new GenericAccountDirectories(rootPath);
         }
 

@@ -91,8 +91,13 @@ namespace TestFtpServer
             {
                 try
                 {
-                    var keepAliveFeature = connection.Features.Get<IFtpConnectionStatusCheck>();
-                    var connectionFeature = connection.Features.Get<IConnectionFeature>();
+                    // Missing features are treated like any other failure to query a
+                    // connection below: the exception is swallowed because the
+                    // connection might have been closed concurrently.
+                    var keepAliveFeature = connection.Features.Get<IFtpConnectionStatusCheck>()
+                        ?? throw new InvalidOperationException("Connection has no status check feature.");
+                    var connectionFeature = connection.Features.Get<IConnectionFeature>()
+                        ?? throw new InvalidOperationException("Connection has no connection feature.");
                     var ftpConnection = (FtpConnection)connection;
                     var connectionId = ftpConnection.ConnectionId;
                     var isAlive = keepAliveFeature.CheckIfAlive();
@@ -124,7 +129,8 @@ namespace TestFtpServer
                 return;
             }
 
-            var serverCommandFeature = ftpConnection.Features.Get<IServerCommandFeature>();
+            var serverCommandFeature = ftpConnection.Features.Get<IServerCommandFeature>()
+                ?? throw new InvalidOperationException("Connection has no server command feature.");
             await serverCommandFeature.ServerCommandWriter.WriteAsync(
                 new CloseConnectionServerCommand());
         }

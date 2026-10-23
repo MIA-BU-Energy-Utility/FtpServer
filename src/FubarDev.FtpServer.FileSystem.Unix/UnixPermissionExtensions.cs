@@ -25,7 +25,7 @@ namespace FubarDev.FtpServer.FileSystem.Unix
                 canExecute |= toApply.Execute;
             }
 
-            if (entry.Owner == ftpUser.Identity.Name)
+            if (entry.Owner == ftpUser.GetUserName())
             {
                 UpdatePermissions(entry.Permissions.User);
             }

@@ -46,20 +46,20 @@ namespace TestFtpServer.CommandMiddlewares
         public Task InvokeAsync(FtpExecutionContext context, FtpCommandExecutionDelegate next)
         {
             var connection = context.Connection;
-            var authInfo = connection.Features.Get<IAuthorizationInformationFeature>();
-            var isUnixUser = authInfo.FtpUser?.IsUnixUser() ?? false;
+            var ftpUser = connection.Features.Get<IAuthorizationInformationFeature>()?.FtpUser;
+            var isUnixUser = ftpUser?.IsUnixUser() ?? false;
             if (!isUnixUser)
             {
                 return next(context);
             }
 
             var fsInfo = connection.Features.Get<IFileSystemFeature>();
-            if (!(fsInfo.FileSystem is UnixFileSystem))
+            if (fsInfo is null || !(fsInfo.FileSystem is UnixFileSystem))
             {
                 return next(context);
             }
 
-            return ExecuteWithChangedFsId(context, authInfo.FtpUser!, next);
+            return ExecuteWithChangedFsId(context, ftpUser!, next);
         }
 
         private static long? ConvertToLong(string? value)
