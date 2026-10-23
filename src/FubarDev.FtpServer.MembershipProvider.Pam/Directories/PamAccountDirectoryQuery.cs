@@ -68,7 +68,7 @@ namespace FubarDev.FtpServer.MembershipProvider.Pam.Directories
                 return homePath!;
             }
 
-            return $"/home/{ftpUser.Identity.Name}";
+            return $"/home/{ftpUser.GetUserName()}";
         }
         private IAccountDirectories GetAnonymousDirectories(ClaimsPrincipal ftpUser)
         {

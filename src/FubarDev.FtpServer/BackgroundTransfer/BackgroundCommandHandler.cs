@@ -14,9 +14,7 @@ using System.Threading.Tasks;
 
 using FubarDev.FtpServer.Features;
 
-#if !NETSTANDARD1_3
 using Microsoft.Extensions.Logging;
-#endif
 
 namespace FubarDev.FtpServer.BackgroundTransfer
 {

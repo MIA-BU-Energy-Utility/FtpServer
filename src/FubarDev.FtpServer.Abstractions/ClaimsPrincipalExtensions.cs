@@ -2,6 +2,7 @@
 // Copyright (c) Fubar Development Junker. All rights reserved.
 // </copyright>
 
+using System;
 using System.Linq;
 using System.Security.Claims;
 
@@ -22,6 +23,21 @@ namespace FubarDev.FtpServer
         public static bool IsAnonymous(this ClaimsPrincipal principal)
         {
             return principal.Identities.Any(x => x.IsAnonymous());
+        }
+
+        /// <summary>
+        /// Gets the user name of an FTP user.
+        /// </summary>
+        /// <param name="principal">The FTP user.</param>
+        /// <returns>
+        /// The user name, or <see langword="null"/> if the identity has no name claim.
+        /// </returns>
+        public static string GetUserName(this ClaimsPrincipal principal)
+        {
+            // ClaimsPrincipal.Identity is only null if no identity was ever assigned,
+            // which does not happen for an authenticated FTP user. Name itself can
+            // legitimately be null when the identity has no name claim.
+            return principal.Identity?.Name!;
         }
 
         /// <summary>

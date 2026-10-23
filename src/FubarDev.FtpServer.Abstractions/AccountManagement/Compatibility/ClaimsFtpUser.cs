@@ -22,7 +22,7 @@ namespace FubarDev.FtpServer.AccountManagement.Compatibility
         public ClaimsFtpUser(ClaimsPrincipal principal)
         {
             _principal = principal;
-            Name = principal.Identity.Name;
+            Name = principal.GetUserName();
         }
 
         /// <inheritdoc />

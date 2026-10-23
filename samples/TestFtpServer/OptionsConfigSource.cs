@@ -148,7 +148,9 @@ namespace TestFtpServer
 
             var source = new MemoryConfigurationSource()
             {
-                InitialData = values,
+                // MemoryConfigurationSource wants string? values; this dictionary never
+                // stores null, so the conversion is just a type widening.
+                InitialData = values.Select(x => new KeyValuePair<string, string?>(x.Key, x.Value)),
             };
 
             return new MemoryConfigurationProvider(source);

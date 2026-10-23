@@ -67,7 +67,7 @@ namespace FubarDev.FtpServer.FileSystem.Unix
         {
             var testNames = new[]
             {
-                accountInformation.FtpUser.Identity.Name,
+                accountInformation.FtpUser.GetUserName(),
                 "nobody",
             };
 

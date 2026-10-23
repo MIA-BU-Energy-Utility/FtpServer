@@ -50,7 +50,7 @@ namespace FubarDev.FtpServer
         /// <returns>The effective access mode for the <paramref name="user"/>.</returns>
         public static IAccessMode GetAccessModeFor(this IUnixPermissions permissions, IUnixOwner entity, ClaimsPrincipal user)
         {
-            var isUser = string.Equals(entity.GetOwner(), user.Identity.Name, StringComparison.OrdinalIgnoreCase);
+            var isUser = string.Equals(entity.GetOwner(), user.GetUserName(), StringComparison.OrdinalIgnoreCase);
             var group = entity.GetGroup();
             var isGroup = group != null && user.IsInRole(group);
             var canRead = (isUser && permissions.User.Read)

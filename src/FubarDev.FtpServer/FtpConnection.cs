@@ -162,7 +162,9 @@ namespace FubarDev.FtpServer
             _keepAlive = new FtpConnectionKeepAlive(this);
 #pragma warning restore 612
             _idleCheck = new IdleCheck(this);
-            var remoteEndPoint = _remoteEndPoint = (IPEndPoint)socket.Client.RemoteEndPoint;
+
+            // A connected socket always has a remote endpoint.
+            var remoteEndPoint = _remoteEndPoint = (IPEndPoint)socket.Client.RemoteEndPoint!;
 #pragma warning disable 618
             RemoteAddress = new Address(remoteEndPoint.Address.ToString(), remoteEndPoint.Port);
 #pragma warning restore 618
@@ -187,7 +189,7 @@ namespace FubarDev.FtpServer
 
             var parentFeatures = new FeatureCollection();
             var connectionFeature = new ConnectionFeature(
-                (IPEndPoint)socket.Client.LocalEndPoint,
+                (IPEndPoint)socket.Client.LocalEndPoint!,
                 remoteEndPoint);
             var secureConnectionFeature = new SecureConnectionFeature();
 

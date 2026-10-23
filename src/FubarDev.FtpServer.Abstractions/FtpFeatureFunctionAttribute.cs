@@ -47,9 +47,10 @@ namespace FubarDev.FtpServer
         /// <inheritdoc />
         public IEnumerable<string> BuildInfo(Type reference, IFtpConnection connection)
         {
-            var method = reference.GetTypeInfo().GetDeclaredMethod(_functionName);
-            var result = method
-               .Invoke(null, new object[] { connection });
+            var method = reference.GetTypeInfo().GetDeclaredMethod(_functionName)
+                ?? throw new InvalidOperationException($"The type {reference} does not declare a method named {_functionName}.");
+            var result = method.Invoke(null, new object[] { connection })
+                ?? throw new InvalidOperationException($"The method {_functionName} on type {reference} returned null.");
             if (result is string s)
             {
                 return new[] { s };

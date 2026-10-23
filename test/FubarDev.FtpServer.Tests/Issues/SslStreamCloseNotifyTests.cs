@@ -93,6 +93,60 @@ namespace FubarDev.FtpServer.Tests.Issues
             Assert.Equal(0x15, wireSpy.RecordedBytes[0]);
         }
 
+        [Fact(Timeout = 60000)]
+        public async Task CloseStreamAsync_DoesNotThrow_WhenPeerAlreadyClosedTheConnection()
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            using var certificate = CreateSelfSignedCertificate();
+
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+            var acceptTask = listener.AcceptTcpClientAsync();
+
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(cts.Token);
+
+            using var server = await acceptTask.WaitAsync(cts.Token);
+
+            var factory = new DefaultSslStreamWrapperFactory();
+
+            var serverStreamTask = factory.WrapStreamAsync(
+                server.GetStream(),
+                keepOpen: false,
+                certificate,
+                cts.Token);
+
+            using (var clientSslStream = new SslStream(
+                client.GetStream(),
+                leaveInnerStreamOpen: false,
+                userCertificateValidationCallback: (_, _, _, _) => true))
+            {
+                var clientAuthTask = clientSslStream.AuthenticateAsClientAsync(
+                    "localhost",
+                    clientCertificates: null,
+                    enabledSslProtocols: System.Security.Authentication.SslProtocols.Tls12,
+                    checkCertificateRevocation: false);
+
+                var serverStream = await serverStreamTask.WaitAsync(cts.Token);
+                await clientAuthTask.WaitAsync(cts.Token);
+
+                // Abruptly close the client side (no close_notify, no graceful FIN) to
+                // simulate a peer that has already reset/closed the connection before
+                // the server gets a chance to send its own close_notify.
+                client.Client.Close(0);
+
+                // Closing the (now peerless) stream must not throw and must still
+                // dispose/close the underlying stream - this is the best-effort
+                // handling added for the close_notify fix.
+                var exception = await Record.ExceptionAsync(
+                    () => factory.CloseStreamAsync(serverStream, cts.Token).WaitAsync(cts.Token));
+
+                Assert.Null(exception);
+            }
+        }
+
         private static X509Certificate2 CreateSelfSignedCertificate()
         {
             using var rsa = RSA.Create(2048);

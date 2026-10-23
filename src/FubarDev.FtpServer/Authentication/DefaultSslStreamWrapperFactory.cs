@@ -62,7 +62,6 @@ namespace FubarDev.FtpServer.Authentication
             }
         }
 
-#if NETCOREAPP || NET47 || NETSTANDARD2_1
         /// <inheritdoc />
         public async Task CloseStreamAsync(Stream sslStream, CancellationToken cancellationToken)
         {
@@ -90,22 +89,6 @@ namespace FubarDev.FtpServer.Authentication
                 }
             }
         }
-#else
-        /// <inheritdoc />
-        public Task CloseStreamAsync(Stream sslStream, CancellationToken cancellationToken)
-        {
-            if (sslStream is SslStream s)
-            {
-#if NET461 || NETSTANDARD2_0
-                s.Close();
-#else
-                s.Dispose();
-#endif
-            }
-
-            return Task.CompletedTask;
-        }
-#endif
 
         /// <summary>
         /// Create a new <see cref="SslStream"/> instance.
@@ -117,11 +100,7 @@ namespace FubarDev.FtpServer.Authentication
             Stream unencryptedStream,
             bool keepOpen)
         {
-#if USE_GNU_SSL_STREAM
-            return new GnuSslStream(unencryptedStream, keepOpen);
-#else
             return new SslStream(unencryptedStream, keepOpen);
-#endif
         }
     }
 }
