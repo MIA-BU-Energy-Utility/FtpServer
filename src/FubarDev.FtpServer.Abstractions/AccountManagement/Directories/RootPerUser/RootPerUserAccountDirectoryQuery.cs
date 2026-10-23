@@ -2,6 +2,7 @@
 // Copyright (c) Fubar Development Junker. All rights reserved.
 // </copyright>
 
+using System;
 using System.IO;
 using System.Security.Claims;
 
@@ -48,7 +49,9 @@ namespace FubarDev.FtpServer.AccountManagement.Directories.RootPerUser
                 return GetAnonymousDirectories(accountInformation.FtpUser);
             }
 
-            var rootPath = Path.Combine(_userRoot, accountInformation.FtpUser.GetUserName());
+            var userName = accountInformation.FtpUser.GetUserName()
+                ?? throw new InvalidOperationException("The authenticated FTP user has no identity name.");
+            var rootPath = Path.Combine(_userRoot, userName);
             return new GenericAccountDirectories(rootPath);
         }
 

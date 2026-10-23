@@ -11,15 +11,9 @@ using Xunit;
 namespace FubarDev.FtpServer.Tests
 {
     /// <summary>
-    /// Guards against reintroducing multi-targeting of the shipped libraries.
+    /// Guards against reintroducing multi-targeting of the shipped libraries: the
+    /// shipped assemblies must only ever target net10.0.
     /// </summary>
-    /// <remarks>
-    /// Multi-targeting (netstandard2.0/2.1) plus framework-conditional <c>#if</c> blocks
-    /// is how the close_notify fix in <see cref="DefaultSslStreamWrapperFactory"/> was
-    /// silently dead code for years: the TLS-shutdown branch was guarded by
-    /// <c>NETCOREAPP || NET47</c>, which is never defined for a netstandard build. These
-    /// tests make sure the shipped assemblies only ever target net10.0.
-    /// </remarks>
     public class TargetFrameworkTests
     {
         [Fact]

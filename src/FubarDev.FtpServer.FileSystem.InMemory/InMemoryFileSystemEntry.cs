@@ -78,7 +78,9 @@ namespace FubarDev.FtpServer.FileSystem.InMemory
         /// <returns>The changed file system entry.</returns>
         public InMemoryFileSystemEntry WithOwner(ClaimsPrincipal user)
         {
-            Owner = user.GetUserName();
+            // Owner is only ever used for ownership/permission comparisons, so a null
+            // user name (identity without a name claim) is fine to carry through here.
+            Owner = user.GetUserName()!;
             return this;
         }
 

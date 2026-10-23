@@ -32,12 +32,9 @@ namespace FubarDev.FtpServer
         /// <returns>
         /// The user name, or <see langword="null"/> if the identity has no name claim.
         /// </returns>
-        public static string GetUserName(this ClaimsPrincipal principal)
+        public static string? GetUserName(this ClaimsPrincipal principal)
         {
-            // ClaimsPrincipal.Identity is only null if no identity was ever assigned,
-            // which does not happen for an authenticated FTP user. Name itself can
-            // legitimately be null when the identity has no name claim.
-            return principal.Identity?.Name!;
+            return principal.Identity?.Name;
         }
 
         /// <summary>

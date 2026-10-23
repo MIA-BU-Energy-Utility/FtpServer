@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# Regression check for the TLS close_notify fix (see PR #14 and the
-# `chore/retarget-net10` PR).
+# Regression check for the TLS close_notify behavior of the FTP server.
 #
 # .NET's own SslStream client cannot tell the difference between a graceful
 # close_notify and a bare socket close: it treats an EOF without a

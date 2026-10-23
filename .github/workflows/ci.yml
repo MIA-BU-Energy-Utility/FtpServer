@@ -66,10 +66,7 @@ jobs:
           if git grep -nE '#if .*(NETSTANDARD|NETCOREAPP|NET4|NET5|NET6|NET7|NET8)' -- src; then
             echo
             echo "Framework-conditional #if guards were found under src/."
-            echo "This repo only ships net10.0 single-targeted libraries: a framework"
-            echo "#if that is never true for net10.0 is exactly how the TLS"
-            echo "close_notify bug (PR #14) stayed dead code for years. Remove the"
-            echo "guard and keep the branch that is correct for net10.0."
+            echo "Only net10.0 is targeted; remove the guard and keep the net10.0 branch."
             exit 1
           fi
 

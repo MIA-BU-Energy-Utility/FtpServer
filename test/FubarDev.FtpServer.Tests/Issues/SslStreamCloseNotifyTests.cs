@@ -110,10 +110,15 @@ namespace FubarDev.FtpServer.Tests.Issues
 
             using var server = await acceptTask.WaitAsync(cts.Token);
 
+            // A stream that lets the handshake through normally, then deterministically
+            // fails every write, standing in for a peer that has already closed or reset
+            // the connection by the time the server tries to send its close_notify alert.
+            var failingStream = new FailOnWriteStream(server.GetStream());
+
             var factory = new DefaultSslStreamWrapperFactory();
 
             var serverStreamTask = factory.WrapStreamAsync(
-                server.GetStream(),
+                failingStream,
                 keepOpen: false,
                 certificate,
                 cts.Token);
@@ -132,18 +137,14 @@ namespace FubarDev.FtpServer.Tests.Issues
                 var serverStream = await serverStreamTask.WaitAsync(cts.Token);
                 await clientAuthTask.WaitAsync(cts.Token);
 
-                // Abruptly close the client side (no close_notify, no graceful FIN) to
-                // simulate a peer that has already reset/closed the connection before
-                // the server gets a chance to send its own close_notify.
-                client.Client.Close(0);
+                failingStream.StartFailingWrites();
 
-                // Closing the (now peerless) stream must not throw and must still
-                // dispose/close the underlying stream - this is the best-effort
-                // handling added for the close_notify fix.
                 var exception = await Record.ExceptionAsync(
                     () => factory.CloseStreamAsync(serverStream, cts.Token).WaitAsync(cts.Token));
 
                 Assert.Null(exception);
+                Assert.True(failingStream.WriteAttempted, "Expected CloseStreamAsync to attempt a write (the close_notify alert) that fails.");
+                Assert.True(failingStream.Disposed, "Expected the underlying stream to still be disposed/closed despite the failed write.");
             }
         }
 
@@ -244,6 +245,84 @@ namespace FubarDev.FtpServer.Tests.Issues
                         RecordedBytes.Add(buffer[offset + i]);
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// A transparent stream wrapper whose writes can be switched, on demand, to
+        /// deterministically fail with an <see cref="IOException"/>.
+        /// </summary>
+        private sealed class FailOnWriteStream : Stream
+        {
+            private readonly Stream _inner;
+            private bool _failWrites;
+
+            public FailOnWriteStream(Stream inner)
+            {
+                _inner = inner;
+            }
+
+            public bool WriteAttempted { get; private set; }
+
+            public bool Disposed { get; private set; }
+
+            public override bool CanRead => _inner.CanRead;
+
+            public override bool CanSeek => _inner.CanSeek;
+
+            public override bool CanWrite => _inner.CanWrite;
+
+            public override long Length => _inner.Length;
+
+            public override long Position
+            {
+                get => _inner.Position;
+                set => _inner.Position = value;
+            }
+
+            public void StartFailingWrites() => _failWrites = true;
+
+            public override void Flush() => _inner.Flush();
+
+            public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+
+            public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+
+            public override void SetLength(long value) => _inner.SetLength(value);
+
+            public override void Write(byte[] buffer, int offset, int count)
+            {
+                WriteAttempted = true;
+                if (_failWrites)
+                {
+                    throw new IOException("Simulated peer reset.");
+                }
+
+                _inner.Write(buffer, offset, count);
+            }
+
+            public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            {
+                WriteAttempted = true;
+                if (_failWrites)
+                {
+                    throw new IOException("Simulated peer reset.");
+                }
+
+                return _inner.WriteAsync(buffer, offset, count, cancellationToken);
+            }
+
+            public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    Disposed = true;
+                    _inner.Dispose();
+                }
+
+                base.Dispose(disposing);
             }
         }
     }

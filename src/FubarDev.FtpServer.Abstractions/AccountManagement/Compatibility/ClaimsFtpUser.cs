@@ -22,7 +22,10 @@ namespace FubarDev.FtpServer.AccountManagement.Compatibility
         public ClaimsFtpUser(ClaimsPrincipal principal)
         {
             _principal = principal;
-            Name = principal.GetUserName();
+
+            // Custom membership providers may supply a principal without a name claim;
+            // Name stays null for those instead of throwing.
+            Name = principal.GetUserName()!;
         }
 
         /// <inheritdoc />
