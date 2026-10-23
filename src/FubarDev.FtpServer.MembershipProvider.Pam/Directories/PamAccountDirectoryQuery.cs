@@ -68,7 +68,9 @@ namespace FubarDev.FtpServer.MembershipProvider.Pam.Directories
                 return homePath!;
             }
 
-            return $"/home/{ftpUser.GetUserName()}";
+            var userName = ftpUser.GetUserName()
+                ?? throw new InvalidOperationException("The authenticated FTP user has no identity name.");
+            return $"/home/{userName}";
         }
         private IAccountDirectories GetAnonymousDirectories(ClaimsPrincipal ftpUser)
         {

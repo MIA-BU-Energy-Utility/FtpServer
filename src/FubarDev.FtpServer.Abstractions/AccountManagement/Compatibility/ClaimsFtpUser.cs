@@ -22,7 +22,12 @@ namespace FubarDev.FtpServer.AccountManagement.Compatibility
         public ClaimsFtpUser(ClaimsPrincipal principal)
         {
             _principal = principal;
-            Name = principal.GetUserName();
+
+            // IFtpUser.Name is non-nullable, but callers (e.g. custom IMembershipProvider
+            // implementations) may hand in a principal whose identity has no name claim.
+            // Preserving that as null here - instead of throwing - keeps this compatibility
+            // wrapper working the same way it always has for such principals.
+            Name = principal.GetUserName()!;
         }
 
         /// <inheritdoc />
