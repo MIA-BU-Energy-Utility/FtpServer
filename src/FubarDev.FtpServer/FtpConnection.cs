@@ -72,6 +72,12 @@ namespace FubarDev.FtpServer
 
         private readonly Channel<FtpCommand> _ftpCommandChannel = Channel.CreateBounded<FtpCommand>(5);
 
+        /// <summary>
+        /// Guards <see cref="_commandCollector"/> and writes into <see cref="_ftpCommandChannel"/>
+        /// against <see cref="DiscardPendingPlaintextCommandsAsync"/> running concurrently.
+        /// </summary>
+        private readonly SemaphoreSlim _commandCollectionLock = new SemaphoreSlim(1, 1);
+
         private readonly int? _dataPort;
 
         private readonly ILogger<FtpConnection>? _logger;
@@ -117,6 +123,8 @@ namespace FubarDev.FtpServer
 
         private readonly IAuthorizationInformationFeature _authorizationInformationFeature;
 
+        private FtpCommandCollector _commandCollector;
+
         private bool _connectionClosing;
 
         private int _connectionClosed;
@@ -137,7 +145,6 @@ namespace FubarDev.FtpServer
         /// <param name="serviceProvider">The service provider for the connection.</param>
         /// <param name="secureDataConnectionWrapper">Wraps a data connection into an SSL stream.</param>
         /// <param name="sslStreamWrapperFactory">The SSL stream wrapper factory.</param>
-        /// <param name="authTlsOptions">Options for SSL/TLS connections.</param>
         /// <param name="logger">The logger for the FTP connection.</param>
         /// <param name="loggerFactory">The logger factory.</param>
         public FtpConnection(
@@ -150,7 +157,6 @@ namespace FubarDev.FtpServer
             IServiceProvider serviceProvider,
             SecureDataConnectionWrapper secureDataConnectionWrapper,
             ISslStreamWrapperFactory sslStreamWrapperFactory,
-            IOptions<AuthTlsOptions> authTlsOptions,
             ILogger<FtpConnection>? logger = null,
             ILoggerFactory? loggerFactory = null)
         {
@@ -193,12 +199,7 @@ namespace FubarDev.FtpServer
             var connectionFeature = new ConnectionFeature(
                 (IPEndPoint)socket.Client.LocalEndPoint!,
                 remoteEndPoint);
-            var secureConnectionFeature = new SecureConnectionFeature
-            {
-                // Implicit FTPS wraps the raw socket in TLS before any command is read, so the
-                // control connection is secure from the very first byte.
-                IsControlConnectionSecure = authTlsOptions.Value.ImplicitFtps,
-            };
+            var secureConnectionFeature = new SecureConnectionFeature();
 
             var applicationInputPipe = new Pipe();
             var applicationOutputPipe = new Pipe();
@@ -251,6 +252,7 @@ namespace FubarDev.FtpServer
 
             _authorizationInformationFeature = features.Get<IAuthorizationInformationFeature>();
 
+            _commandCollector = new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding);
             _commandReader = ReadCommandsFromPipeline(
                 applicationInputPipe.Reader,
                 _ftpCommandChannel.Writer,
@@ -507,6 +509,32 @@ namespace FubarDev.FtpServer
         }
 
         /// <summary>
+        /// Drops every <see cref="FtpCommand"/> collected but not yet dispatched, and resets the
+        /// collector's leftover (not-yet-terminated) bytes. Called once <c>AUTH TLS</c> has
+        /// actually secured the control connection, so that commands which arrived in the same
+        /// plaintext segment as <c>AUTH TLS</c> - a STARTTLS command-injection, CVE-2011-0411
+        /// class - can never be dispatched as if they had been received over TLS.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The task.</returns>
+        internal async Task DiscardPendingPlaintextCommandsAsync(CancellationToken cancellationToken)
+        {
+            await _commandCollectionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                while (_ftpCommandChannel.Reader.TryRead(out _))
+                {
+                }
+
+                _commandCollector = new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding);
+            }
+            finally
+            {
+                _commandCollectionLock.Release();
+            }
+        }
+
+        /// <summary>
         /// Send responses to the client.
         /// </summary>
         /// <param name="serverCommandReader">Reader for the responses.</param>
@@ -609,8 +637,6 @@ namespace FubarDev.FtpServer
             ChannelWriter<FtpCommand> commandWriter,
             CancellationToken cancellationToken)
         {
-            var collector = new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding);
-
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
@@ -619,15 +645,28 @@ namespace FubarDev.FtpServer
                        .ConfigureAwait(false);
 
                     var buffer = result.Buffer;
-                    var position = buffer.Start;
-                    while (buffer.TryGet(ref position, out var memory))
+
+                    // Held across the writes below (which may block on a full channel) so that
+                    // DiscardPendingPlaintextCommandsAsync can never interleave with a batch of
+                    // commands collected from a single read: it either runs before this batch
+                    // starts, or after it has been written out in full.
+                    await _commandCollectionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
                     {
-                        var commands = collector.Collect(memory.Span);
-                        foreach (var command in commands)
+                        var position = buffer.Start;
+                        while (buffer.TryGet(ref position, out var memory))
                         {
-                            await commandWriter.WriteAsync(command, cancellationToken)
-                               .ConfigureAwait(false);
+                            var commands = _commandCollector.Collect(memory.Span);
+                            foreach (var command in commands)
+                            {
+                                await commandWriter.WriteAsync(command, cancellationToken)
+                                   .ConfigureAwait(false);
+                            }
                         }
+                    }
+                    finally
+                    {
+                        _commandCollectionLock.Release();
                     }
 
                     // Required to signal an end of the read operation.

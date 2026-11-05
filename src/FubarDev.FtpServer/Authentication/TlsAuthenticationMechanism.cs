@@ -95,15 +95,19 @@ namespace FubarDev.FtpServer.Authentication
                     cancellationToken)
                .ConfigureAwait(false);
 
-            await serverCommandWriter.WriteAsync(
-                    new TlsEnableServerCommand(),
-                    cancellationToken)
+            var tlsEnableCommand = new TlsEnableServerCommand();
+            await serverCommandWriter.WriteAsync(tlsEnableCommand, cancellationToken)
                .ConfigureAwait(false);
 
             await serverCommandWriter.WriteAsync(
                     new ResumeConnectionServerCommand(),
                     cancellationToken)
                .ConfigureAwait(false);
+
+            // Block the command dispatcher from moving on to whatever was already collected
+            // behind AUTH TLS until the switch is actually resolved: TlsEnableServerCommandHandler
+            // discards those pending commands as part of completing this task.
+            await tlsEnableCommand.Completion.ConfigureAwait(false);
 
             return new FtpResponse(234, null);
         }

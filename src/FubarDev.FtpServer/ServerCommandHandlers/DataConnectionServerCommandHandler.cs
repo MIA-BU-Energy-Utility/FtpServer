@@ -11,6 +11,7 @@ using FubarDev.FtpServer.Features;
 using FubarDev.FtpServer.ServerCommands;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FubarDev.FtpServer.ServerCommandHandlers
 {
@@ -20,18 +21,22 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
     public class DataConnectionServerCommandHandler : IServerCommandHandler<DataConnectionServerCommand>
     {
         private readonly IFtpConnectionAccessor _connectionAccessor;
+        private readonly IOptions<AuthTlsOptions> _authTlsOptions;
         private readonly ILogger<DataConnectionServerCommandHandler>? _logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DataConnectionServerCommandHandler"/> class.
         /// </summary>
         /// <param name="connectionAccessor">The FTP connection accessor.</param>
+        /// <param name="authTlsOptions">Options for SSL/TLS connections.</param>
         /// <param name="logger">The logger.</param>
         public DataConnectionServerCommandHandler(
             IFtpConnectionAccessor connectionAccessor,
+            IOptions<AuthTlsOptions> authTlsOptions,
             ILogger<DataConnectionServerCommandHandler>? logger = null)
         {
             _connectionAccessor = connectionAccessor;
+            _authTlsOptions = authTlsOptions;
             _logger = logger;
         }
 
@@ -41,6 +46,21 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
             var connection = _connectionAccessor.FtpConnection;
             var serverCommandWriter = connection.Features.Get<IServerCommandFeature>().ServerCommandWriter;
             var localizationFeature = connection.Features.Get<ILocalizationFeature>();
+
+            // Single choke point for every command that opens a data connection (RETR, STOR,
+            // APPE, LIST/NLST, MLSD, SITE BLST, ...): reject here instead of listing command
+            // names, so nothing that transfers data over FTP-DATA can slip past this check.
+            if (_authTlsOptions.Value.RequireProtectedDataConnections
+                && !connection.Features.Get<ISecureConnectionFeature>().IsDataConnectionProtected)
+            {
+                var deniedResponse = new FtpResponse(
+                    521,
+                    localizationFeature.Catalog.GetString("Data connections must be encrypted."));
+                await serverCommandWriter
+                   .WriteAsync(new SendResponseServerCommand(deniedResponse), cancellationToken)
+                   .ConfigureAwait(false);
+                return;
+            }
 
             using (new ConnectionKeepAlive(connection, command.Command))
             {

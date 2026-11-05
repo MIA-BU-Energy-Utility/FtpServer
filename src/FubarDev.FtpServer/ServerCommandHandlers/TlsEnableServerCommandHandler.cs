@@ -43,32 +43,54 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
         /// <inheritdoc />
         public async Task ExecuteAsync(TlsEnableServerCommand command, CancellationToken cancellationToken)
         {
-            var connection = _connectionAccessor.FtpConnection;
-            var serverCommandsFeature = connection.Features.Get<IServerCommandFeature>();
-            var localizationFeature = connection.Features.Get<ILocalizationFeature>();
-
-            if (_serverCertificate == null)
-            {
-                var errorMessage = localizationFeature.Catalog.GetString("TLS not configured");
-                await serverCommandsFeature.ServerCommandWriter.WriteAsync(
-                        new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
-                        cancellationToken)
-                   .ConfigureAwait(false);
-                return;
-            }
-
             try
             {
-                await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
-                   .ConfigureAwait(false);
+                var connection = _connectionAccessor.FtpConnection;
+                var serverCommandsFeature = connection.Features.Get<IServerCommandFeature>();
+                var localizationFeature = connection.Features.Get<ILocalizationFeature>();
+
+                if (_serverCertificate == null)
+                {
+                    var errorMessage = localizationFeature.Catalog.GetString("TLS not configured");
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(
+                            new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
+                            cancellationToken)
+                       .ConfigureAwait(false);
+                    return;
+                }
+
+                try
+                {
+                    await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
+                       .ConfigureAwait(false);
+
+                    // The control connection is now secured. Drop anything already collected
+                    // from data that arrived while it wasn't: it could be attacker-injected
+                    // plaintext commands riding on the same TCP segment as AUTH TLS (STARTTLS
+                    // command injection, CVE-2011-0411 class). This runs unconditionally,
+                    // independent of AuthTlsOptions.RequireTlsForLogin - the injection is a
+                    // vulnerability in its own right.
+                    if (connection is FtpConnection ftpConnection)
+                    {
+                        await ftpConnection.DiscardPendingPlaintextCommandsAsync(cancellationToken)
+                           .ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    var errorMessage = localizationFeature.Catalog.GetString("TLS negotiation error: {0}", ex.Message);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(
+                            new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
+                            cancellationToken)
+                       .ConfigureAwait(false);
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                var errorMessage = localizationFeature.Catalog.GetString("TLS negotiation error: {0}", ex.Message);
-                await serverCommandsFeature.ServerCommandWriter.WriteAsync(
-                        new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
-                        cancellationToken)
-                   .ConfigureAwait(false);
+                // AUTH TLS awaits this before returning its own response: the command
+                // dispatcher must not move on to the next already-collected command before the
+                // switch (success or failure) is fully resolved.
+                command.SignalCompletion();
             }
         }
 
@@ -114,6 +136,7 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
             secureConnectionFeature.CreateEncryptedStream = Task.FromResult;
             secureConnectionFeature.CloseEncryptedControlStream = ct => Task.CompletedTask;
             secureConnectionFeature.IsControlConnectionSecure = false;
+            secureConnectionFeature.IsDataConnectionProtected = false;
         }
     }
 }

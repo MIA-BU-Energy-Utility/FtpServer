@@ -34,13 +34,30 @@ namespace FubarDev.FtpServer.Features
         /// secured with TLS, either because <c>AUTH TLS</c> succeeded or because the
         /// connection uses implicit FTPS.
         /// </summary>
-        bool IsControlConnectionSecure { get; set; }
+        /// <remarks>
+        /// Default-implemented to fail closed (<see langword="false"/>, and a no-op setter) so
+        /// that an existing implementer of this interface - compiled before this member existed -
+        /// keeps working without being forced to implement it, and is treated as not secure
+        /// rather than crashing or silently appearing secure.
+        /// </remarks>
+        bool IsControlConnectionSecure
+        {
+            get => false;
+            set { }
+        }
 
         /// <summary>
         /// Gets or sets a value indicating whether the client requested protected data
         /// connections through <c>PROT P</c>. <c>PROT C</c> (the default) resets this to
         /// <see langword="false"/>.
         /// </summary>
-        bool IsDataConnectionProtected { get; set; }
+        /// <remarks>
+        /// Default-implemented to fail closed for the same reason as <see cref="IsControlConnectionSecure"/>.
+        /// </remarks>
+        bool IsDataConnectionProtected
+        {
+            get => false;
+            set { }
+        }
     }
 }

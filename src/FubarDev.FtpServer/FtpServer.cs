@@ -279,10 +279,12 @@ namespace FubarDev.FtpServer
             try
             {
                 Stream socketStream = client.GetStream();
+                var controlStreamSecured = false;
                 foreach (var controlStreamAdapter in _controlStreamAdapters)
                 {
                     socketStream = await controlStreamAdapter.WrapAsync(socketStream, CancellationToken.None)
                        .ConfigureAwait(false);
+                    controlStreamSecured = true;
                 }
 
                 // Initialize information about the socket
@@ -294,6 +296,15 @@ namespace FubarDev.FtpServer
                 var connection = scope.ServiceProvider.GetRequiredService<IFtpConnection>();
                 var connectionAccessor = scope.ServiceProvider.GetRequiredService<IFtpConnectionAccessor>();
                 connectionAccessor.FtpConnection = connection;
+
+                if (controlStreamSecured)
+                {
+                    // A control stream adapter (e.g. implicit FTPS) already wrapped the raw
+                    // socket in TLS above, before any command could be read in plaintext -
+                    // reflect that here rather than trusting AuthTlsOptions.ImplicitFtps alone,
+                    // which could be set without the adapter actually being registered.
+                    connection.Features.Get<ISecureConnectionFeature>().IsControlConnectionSecure = true;
+                }
 
                 // Remember connection
                 if (!_connections.TryAdd(connection, new FtpConnectionInfo(scope)))

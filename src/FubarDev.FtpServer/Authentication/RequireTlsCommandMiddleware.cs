@@ -16,9 +16,15 @@ using Microsoft.Extensions.Options;
 namespace FubarDev.FtpServer.Authentication
 {
     /// <summary>
-    /// Enforces <see cref="AuthTlsOptions.RequireTlsForLogin"/> and
-    /// <see cref="AuthTlsOptions.RequireProtectedDataConnections"/>.
+    /// Enforces <see cref="AuthTlsOptions.RequireTlsForLogin"/>.
     /// </summary>
+    /// <remarks>
+    /// <see cref="AuthTlsOptions.RequireProtectedDataConnections"/> is enforced separately, in
+    /// <see cref="ServerCommandHandlers.DataConnectionServerCommandHandler"/> - the single choke
+    /// point every data-transfer command (RETR, STOR, APPE, LIST, NLST, MLSD, SITE BLST, ...)
+    /// goes through to open its data connection, rather than a command-name list here that a new
+    /// or overlooked command could slip past.
+    /// </remarks>
     public class RequireTlsCommandMiddleware : IFtpCommandMiddleware
     {
         /// <summary>
@@ -29,15 +35,6 @@ namespace FubarDev.FtpServer.Authentication
         private static readonly HashSet<string> _allowedBeforeLogin = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "AUTH", "ADAT", "FEAT", "SYST", "NOOP", "QUIT", "LOGOUT", "HELP", "OPTS", "PBSZ", "PROT", "LANG", "HOST",
-        };
-
-        /// <summary>
-        /// Commands that open a data connection and therefore need <c>PROT P</c> when
-        /// protected data connections are required.
-        /// </summary>
-        private static readonly HashSet<string> _dataTransferCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "RETR", "STOR", "APPE", "LIST", "NLST", "LS", "MLSD",
         };
 
         private readonly IOptions<AuthTlsOptions> _options;
@@ -55,26 +52,16 @@ namespace FubarDev.FtpServer.Authentication
         public Task InvokeAsync(FtpExecutionContext context, FtpCommandExecutionDelegate next)
         {
             var options = _options.Value;
-            if (!options.RequireTlsForLogin && !options.RequireProtectedDataConnections)
+            if (!options.RequireTlsForLogin)
             {
                 return next(context);
             }
 
             var secureConnectionFeature = context.Connection.Features.Get<ISecureConnectionFeature>();
-            var commandName = context.Command.Name;
-
-            if (options.RequireTlsForLogin
-                && !secureConnectionFeature.IsControlConnectionSecure
-                && !_allowedBeforeLogin.Contains(commandName))
+            if (!secureConnectionFeature.IsControlConnectionSecure
+                && !_allowedBeforeLogin.Contains(context.Command.Name))
             {
                 return RejectAsync(context, 530, T(context, "TLS required: use AUTH TLS before logging in."));
-            }
-
-            if (options.RequireProtectedDataConnections
-                && !secureConnectionFeature.IsDataConnectionProtected
-                && _dataTransferCommands.Contains(commandName))
-            {
-                return RejectAsync(context, 521, T(context, "Data connections must be encrypted."));
             }
 
             return next(context);
