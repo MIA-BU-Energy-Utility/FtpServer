@@ -100,6 +100,7 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
                     networkStreamFeature,
                     secureConnectionFeature,
                     ct);
+            secureConnectionFeature.IsControlConnectionSecure = true;
         }
 
         private static async Task CloseEncryptedControlConnectionAsync(
@@ -112,6 +113,7 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
 
             secureConnectionFeature.CreateEncryptedStream = Task.FromResult;
             secureConnectionFeature.CloseEncryptedControlStream = ct => Task.CompletedTask;
+            secureConnectionFeature.IsControlConnectionSecure = false;
         }
     }
 }

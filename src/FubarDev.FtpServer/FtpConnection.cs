@@ -137,6 +137,7 @@ namespace FubarDev.FtpServer
         /// <param name="serviceProvider">The service provider for the connection.</param>
         /// <param name="secureDataConnectionWrapper">Wraps a data connection into an SSL stream.</param>
         /// <param name="sslStreamWrapperFactory">The SSL stream wrapper factory.</param>
+        /// <param name="authTlsOptions">Options for SSL/TLS connections.</param>
         /// <param name="logger">The logger for the FTP connection.</param>
         /// <param name="loggerFactory">The logger factory.</param>
         public FtpConnection(
@@ -149,6 +150,7 @@ namespace FubarDev.FtpServer
             IServiceProvider serviceProvider,
             SecureDataConnectionWrapper secureDataConnectionWrapper,
             ISslStreamWrapperFactory sslStreamWrapperFactory,
+            IOptions<AuthTlsOptions> authTlsOptions,
             ILogger<FtpConnection>? logger = null,
             ILoggerFactory? loggerFactory = null)
         {
@@ -191,7 +193,12 @@ namespace FubarDev.FtpServer
             var connectionFeature = new ConnectionFeature(
                 (IPEndPoint)socket.Client.LocalEndPoint!,
                 remoteEndPoint);
-            var secureConnectionFeature = new SecureConnectionFeature();
+            var secureConnectionFeature = new SecureConnectionFeature
+            {
+                // Implicit FTPS wraps the raw socket in TLS before any command is read, so the
+                // control connection is secure from the very first byte.
+                IsControlConnectionSecure = authTlsOptions.Value.ImplicitFtps,
+            };
 
             var applicationInputPipe = new Pipe();
             var applicationOutputPipe = new Pipe();
@@ -1008,6 +1015,12 @@ namespace FubarDev.FtpServer
 
             /// <inheritdoc />
             public CloseEncryptedStreamDelegate CloseEncryptedControlStream { get; set; } = ct => Task.CompletedTask;
+
+            /// <inheritdoc />
+            public bool IsControlConnectionSecure { get; set; }
+
+            /// <inheritdoc />
+            public bool IsDataConnectionProtected { get; set; }
         }
 
         private class DuplexPipe : IDuplexPipe

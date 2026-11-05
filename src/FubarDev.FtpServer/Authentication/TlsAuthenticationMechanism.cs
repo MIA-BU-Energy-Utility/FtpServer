@@ -153,10 +153,12 @@ namespace FubarDev.FtpServer.Authentication
                 {
                     case "C":
                         secureConnectionFeature.CreateEncryptedStream = Task.FromResult;
+                        secureConnectionFeature.IsDataConnectionProtected = false;
                         response = new FtpResponse(200, T("Data channel protection level set to {0}.", protCode));
                         break;
                     case "P":
                         secureConnectionFeature.CreateEncryptedStream = stream => CreateSslStream(hostSelector.SelectedHost, stream);
+                        secureConnectionFeature.IsDataConnectionProtected = true;
                         response = new FtpResponse(200, T("Data channel protection level set to {0}.", protCode));
                         break;
                     default:
