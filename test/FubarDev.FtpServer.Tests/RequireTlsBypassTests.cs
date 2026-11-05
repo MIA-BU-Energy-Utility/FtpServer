@@ -14,6 +14,8 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
+using FubarDev.FtpServer.ServerCommandHandlers;
+
 using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
@@ -46,6 +48,8 @@ namespace FubarDev.FtpServer.Tests
         /// forcing the race between the collector and the TLS switch that a small, unpadded
         /// command list (<c>fillers: 0</c>) might not reliably exercise.
         /// </summary>
+        /// <param name="fillers">The number of filler <c>FEAT</c> commands pipelined behind <c>AUTH TLS</c>.</param>
+        /// <returns>The task.</returns>
         [Theory(Timeout = 60000)]
         [InlineData(0)]
         [InlineData(4)]
@@ -118,6 +122,7 @@ namespace FubarDev.FtpServer.Tests
         /// connection - it must be rejected the same way <c>RETR</c>/<c>STOR</c>/<c>LIST</c> are
         /// when <c>RequireProtectedDataConnections</c> is on and the client never sent <c>PROT P</c>.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task SiteBlst_WithoutProtP_IsRejectedWith521()
         {
@@ -168,6 +173,7 @@ namespace FubarDev.FtpServer.Tests
         /// re-authenticated must not be able to <c>STOR</c> in plaintext on the strength of the
         /// previous session's protection level.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task ReinAfterProtP_RequiresProtPAgainForSubsequentStor()
         {
@@ -221,12 +227,10 @@ namespace FubarDev.FtpServer.Tests
                 var dataPort = ParsePasvPort(pasvReply);
 
                 // No PROT P in this new session: STOR must be rejected, not silently accepted on
-                // the strength of the PROT P sent before REIN.
+                // the strength of the PROT P sent before REIN. STOR is one of
+                // RequireTlsCommandMiddleware's fast-path commands, so it's rejected immediately -
+                // no 150 is sent at all.
                 await SendAsync(tls, "STOR leak.txt");
-                var opening = await ReadLineAsync(tls, default);
-                _out.WriteLine(opening);
-                Assert.StartsWith("150", opening);
-
                 var final = await ReadLineAsync(tls, default);
                 _out.WriteLine(final);
                 Assert.StartsWith("521", final);
@@ -244,10 +248,26 @@ namespace FubarDev.FtpServer.Tests
         /// control side closes it immediately (a 0-byte read) or it never sends anything before
         /// the short timeout elapses - both mean no data was transferred.
         /// </summary>
+        /// <summary>
+        /// Connecting to a rejected data connection's advertised port must not yield any data.
+        /// The choke point closes its listener on rejection (see
+        /// <see cref="DataConnectionServerCommandHandler"/>), so connecting at all is now
+        /// expected to fail outright with "connection refused" - tolerated here alongside a clean
+        /// close (0-byte read) or a timeout with nothing ever arriving, which also mean no data
+        /// was transferred.
+        /// </summary>
         private static async Task AssertNoDataArrivesAsync(int dataPort)
         {
             using var data = new TcpClient();
-            await data.ConnectAsync("127.0.0.1", dataPort);
+            try
+            {
+                await data.ConnectAsync("127.0.0.1", dataPort);
+            }
+            catch (SocketException)
+            {
+                return;
+            }
+
             var buffer = new byte[1];
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             try

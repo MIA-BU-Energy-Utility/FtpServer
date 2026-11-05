@@ -61,20 +61,28 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
 
                 try
                 {
-                    await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
-                       .ConfigureAwait(false);
-
-                    // The control connection is now secured. Drop anything already collected
-                    // from data that arrived while it wasn't: it could be attacker-injected
-                    // plaintext commands riding on the same TCP segment as AUTH TLS (STARTTLS
-                    // command injection, CVE-2011-0411 class). This runs unconditionally,
-                    // independent of AuthTlsOptions.RequireTlsForLogin - the injection is a
-                    // vulnerability in its own right.
+                    // Drop anything already collected from data that arrived over the
+                    // still-plaintext connection: it could be attacker-injected plaintext
+                    // commands riding on the same TCP segment as AUTH TLS (STARTTLS command
+                    // injection, CVE-2011-0411 class). Runs unconditionally, independent of
+                    // AuthTlsOptions.RequireTlsForLogin - the injection is a vulnerability on
+                    // its own.
+                    //
+                    // Must happen before EnableSslStreamAsync, not after: the receiver is still
+                    // paused and no TLS adapter exists yet here, so nothing but pre-switch
+                    // plaintext can possibly be queued. Discarding afterwards races the client's
+                    // first real TLS command - the new adapter starts reading immediately to
+                    // perform the handshake, and a command sent right after (as every real
+                    // client does, with no delay) can already be parsed and queued by the time a
+                    // post-enable discard runs, deleting it instead of the injection.
                     if (connection is FtpConnection ftpConnection)
                     {
                         await ftpConnection.DiscardPendingPlaintextCommandsAsync(cancellationToken)
                            .ConfigureAwait(false);
                     }
+
+                    await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
+                       .ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

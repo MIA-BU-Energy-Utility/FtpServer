@@ -6,6 +6,7 @@
 //-----------------------------------------------------------------------
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -70,13 +71,17 @@ namespace FubarDev.FtpServer
 
         private readonly Task _commandReader;
 
-        private readonly Channel<FtpCommand> _ftpCommandChannel = Channel.CreateBounded<FtpCommand>(5);
-
         /// <summary>
-        /// Guards <see cref="_commandCollector"/> and writes into <see cref="_ftpCommandChannel"/>
-        /// against <see cref="DiscardPendingPlaintextCommandsAsync"/> running concurrently.
+        /// The same <see cref="PipeReader"/> <see cref="ReadCommandsFromPipeline"/> reads from.
+        /// Kept as a field so <see cref="DiscardPendingPlaintextCommandsAsync"/> can call
+        /// <see cref="PipeReader.CancelPendingRead"/> on it: without pipelined plaintext behind
+        /// <c>AUTH TLS</c>, that loop is simply parked waiting for more data - which, mid-switch,
+        /// isn't coming from anywhere (the old adapter is paused, the new one doesn't exist yet) -
+        /// so it would never reach the point where it notices a pending discard request on its own.
         /// </summary>
-        private readonly SemaphoreSlim _commandCollectionLock = new SemaphoreSlim(1, 1);
+        private readonly PipeReader _commandPipeReader;
+
+        private readonly Channel<PendingCommand> _ftpCommandChannel = Channel.CreateBounded<PendingCommand>(5);
 
         private readonly int? _dataPort;
 
@@ -124,6 +129,23 @@ namespace FubarDev.FtpServer
         private readonly IAuthorizationInformationFeature _authorizationInformationFeature;
 
         private FtpCommandCollector _commandCollector;
+
+        /// <summary>
+        /// Bumped by <see cref="ReadCommandsFromPipeline"/>, on <see cref="DiscardPendingPlaintextCommandsAsync"/>'s
+        /// request, on every <c>AUTH TLS</c> switch. Each <see cref="PendingCommand"/> carries the
+        /// epoch that was active when its bytes were read from the pipe; the dispatcher drops
+        /// anything that doesn't carry the current epoch instead of executing it, as a backstop.
+        /// See <see cref="PendingCommand"/>.
+        /// </summary>
+        private int _commandEpoch;
+
+        /// <summary>
+        /// Set by <see cref="DiscardPendingPlaintextCommandsAsync"/> and completed by
+        /// <see cref="ReadCommandsFromPipeline"/> once it has fully drained the pipe and switched
+        /// epochs - see the remarks on <see cref="DiscardPendingPlaintextCommandsAsync"/> for why
+        /// the reader, not the requester, has to be the one to decide when that's safe.
+        /// </summary>
+        private TaskCompletionSource<bool>? _discardAcknowledgement;
 
         private bool _connectionClosing;
 
@@ -253,8 +275,9 @@ namespace FubarDev.FtpServer
             _authorizationInformationFeature = features.Get<IAuthorizationInformationFeature>();
 
             _commandCollector = new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding);
+            _commandPipeReader = applicationInputPipe.Reader;
             _commandReader = ReadCommandsFromPipeline(
-                applicationInputPipe.Reader,
+                _commandPipeReader,
                 _ftpCommandChannel.Writer,
                 _cancellationTokenSource.Token);
         }
@@ -509,28 +532,122 @@ namespace FubarDev.FtpServer
         }
 
         /// <summary>
-        /// Drops every <see cref="FtpCommand"/> collected but not yet dispatched, and resets the
-        /// collector's leftover (not-yet-terminated) bytes. Called once <c>AUTH TLS</c> has
-        /// actually secured the control connection, so that commands which arrived in the same
-        /// plaintext segment as <c>AUTH TLS</c> - a STARTTLS command-injection, CVE-2011-0411
-        /// class - can never be dispatched as if they had been received over TLS.
+        /// Requests that <see cref="ReadCommandsFromPipeline"/> fully drain the pipe, bump the
+        /// command epoch, and replace the collector (abandoning its leftover, not-yet-terminated
+        /// bytes), then waits for it to have done so. Called once the control connection's
+        /// receiver has been paused and before <c>AUTH TLS</c> actually switches it to TLS, so
+        /// that commands which arrived in the same plaintext segment as <c>AUTH TLS</c> - a
+        /// STARTTLS command-injection, CVE-2011-0411 class - can never be dispatched as if they
+        /// had been received over TLS.
         /// </summary>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>The task.</returns>
+        /// <remarks>
+        /// <para>
+        /// The actual drain-and-swap must happen on <see cref="ReadCommandsFromPipeline"/>'s own
+        /// thread, not here: only that loop knows when the pipe is genuinely caught up. The
+        /// control connection's receiver reads the raw socket in small chunks, so a single
+        /// plaintext TCP segment pipelined behind <c>AUTH TLS</c> can arrive at
+        /// <see cref="PipeReader.ReadAsync"/> as several small reads rather than one. Bumping the
+        /// epoch here, based on nothing more than "the receiver was paused a moment ago", raced a
+        /// chunk that hadn't been read yet: it would get collected (correctly, still from
+        /// plaintext data) only after the bump, tagging it with the new epoch and letting it
+        /// through as if it had arrived over TLS.
+        /// </para>
+        /// <para>
+        /// This method itself must not block waiting for that either - not while the reader is
+        /// itself stuck writing to a full, bounded <see cref="_ftpCommandChannel"/> (enough
+        /// pipelined filler commands behind <c>AUTH TLS</c> fill it). So it keeps draining the
+        /// channel itself while it waits, which is what frees the capacity the reader needs to
+        /// reach its own request check and acknowledge.
+        /// </para>
+        /// <para>
+        /// Without any pipelined plaintext at all - the common case, just <c>AUTH TLS</c> on its
+        /// own - the reader has nothing further to read and is simply parked in
+        /// <see cref="PipeReader.ReadAsync"/>, which would never return to let it notice this
+        /// request by itself: the old adapter is paused (nothing more will ever arrive on it) and
+        /// the new one doesn't exist until after this method returns. <see cref="PipeReader.CancelPendingRead"/>
+        /// forces that pending read to return immediately (with nothing canceled from the
+        /// reader's own point of view - it just means "go look at what's buffered, which may be
+        /// nothing, right now").
+        /// </para>
+        /// </remarks>
         internal async Task DiscardPendingPlaintextCommandsAsync(CancellationToken cancellationToken)
         {
-            await _commandCollectionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var acknowledgement = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _discardAcknowledgement, acknowledgement);
             try
             {
-                while (_ftpCommandChannel.Reader.TryRead(out _))
-                {
-                }
+                _commandPipeReader.CancelPendingRead();
 
-                _commandCollector = new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding);
+                while (!acknowledgement.Task.IsCompleted)
+                {
+                    while (_ftpCommandChannel.Reader.TryRead(out _))
+                    {
+                    }
+
+                    await Task.WhenAny(acknowledgement.Task, Task.Delay(5, cancellationToken))
+                       .ConfigureAwait(false);
+                }
             }
             finally
             {
-                _commandCollectionLock.Release();
+                Volatile.Write(ref _discardAcknowledgement, null);
+            }
+        }
+
+        /// <summary>
+        /// Drains whatever <paramref name="reader"/> already has buffered (non-blocking - a
+        /// client cannot send TLS application data before the handshake completes, so nothing
+        /// genuinely new can appear here), collecting it with the pre-switch epoch and collector,
+        /// then bumps the epoch and installs a fresh collector before acknowledging
+        /// <paramref name="acknowledgement"/>. See <see cref="DiscardPendingPlaintextCommandsAsync"/>.
+        /// </summary>
+        private async Task DrainBeforeTlsSwitchAsync(
+            PipeReader reader,
+            ChannelWriter<PendingCommand> commandWriter,
+            TaskCompletionSource<bool> acknowledgement,
+            CancellationToken cancellationToken)
+        {
+            while (reader.TryRead(out var result))
+            {
+                await WriteCollectedCommandsAsync(result.Buffer, commandWriter, cancellationToken)
+                   .ConfigureAwait(false);
+                reader.AdvanceTo(result.Buffer.End);
+
+                if (result.IsCompleted)
+                {
+                    break;
+                }
+            }
+
+            Interlocked.Increment(ref _commandEpoch);
+            Volatile.Write(ref _commandCollector, new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding));
+            acknowledgement.TrySetResult(true);
+        }
+
+        /// <summary>
+        /// Collects <see cref="FtpCommand"/>s from <paramref name="buffer"/> using whichever
+        /// collector is current and writes them to <paramref name="commandWriter"/>, tagged with
+        /// whichever epoch is current as of the start of this call. See <see cref="PendingCommand"/>.
+        /// </summary>
+        private async Task WriteCollectedCommandsAsync(
+            ReadOnlySequence<byte> buffer,
+            ChannelWriter<PendingCommand> commandWriter,
+            CancellationToken cancellationToken)
+        {
+            var epoch = Volatile.Read(ref _commandEpoch);
+            var collector = Volatile.Read(ref _commandCollector);
+
+            var position = buffer.Start;
+            while (buffer.TryGet(ref position, out var memory))
+            {
+                var commands = collector.Collect(memory.Span);
+                foreach (var command in commands)
+                {
+                    await commandWriter.WriteAsync(new PendingCommand(command, epoch), cancellationToken)
+                       .ConfigureAwait(false);
+                }
             }
         }
 
@@ -634,7 +751,7 @@ namespace FubarDev.FtpServer
 
         private async Task ReadCommandsFromPipeline(
             PipeReader reader,
-            ChannelWriter<FtpCommand> commandWriter,
+            ChannelWriter<PendingCommand> commandWriter,
             CancellationToken cancellationToken)
         {
             try
@@ -644,38 +761,29 @@ namespace FubarDev.FtpServer
                     var result = await reader.ReadAsync(cancellationToken)
                        .ConfigureAwait(false);
 
-                    var buffer = result.Buffer;
-
-                    // Held across the writes below (which may block on a full channel) so that
-                    // DiscardPendingPlaintextCommandsAsync can never interleave with a batch of
-                    // commands collected from a single read: it either runs before this batch
-                    // starts, or after it has been written out in full.
-                    await _commandCollectionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    try
-                    {
-                        var position = buffer.Start;
-                        while (buffer.TryGet(ref position, out var memory))
-                        {
-                            var commands = _commandCollector.Collect(memory.Span);
-                            foreach (var command in commands)
-                            {
-                                await commandWriter.WriteAsync(command, cancellationToken)
-                                   .ConfigureAwait(false);
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        _commandCollectionLock.Release();
-                    }
+                    await WriteCollectedCommandsAsync(result.Buffer, commandWriter, cancellationToken)
+                       .ConfigureAwait(false);
 
                     // Required to signal an end of the read operation.
-                    reader.AdvanceTo(buffer.End);
+                    reader.AdvanceTo(result.Buffer.End);
 
                     // Stop reading if there's no more data coming.
                     if (result.IsCompleted)
                     {
                         break;
+                    }
+
+                    // AUTH TLS is waiting to switch: now that this batch (everything the previous
+                    // ReadAsync returned) has been fully collected and written out under the old
+                    // epoch, drain whatever's left in the pipe the same way and hand control back
+                    // with a fresh epoch and collector - see DiscardPendingPlaintextCommandsAsync
+                    // for why it has to be this loop that decides that, and why it has to happen
+                    // here rather than racing a later iteration of this same loop.
+                    var pendingDiscard = Volatile.Read(ref _discardAcknowledgement);
+                    if (pendingDiscard != null && !pendingDiscard.Task.IsCompleted)
+                    {
+                        await DrainBeforeTlsSwitchAsync(reader, commandWriter, pendingDiscard, cancellationToken)
+                           .ConfigureAwait(false);
                     }
                 }
             }
@@ -828,7 +936,7 @@ namespace FubarDev.FtpServer
             OnClosed();
         }
 
-        private async Task CommandChannelDispatcherAsync(ChannelReader<FtpCommand> commandReader, CancellationToken cancellationToken)
+        private async Task CommandChannelDispatcherAsync(ChannelReader<PendingCommand> commandReader, CancellationToken cancellationToken)
         {
             // Initialize middleware objects
             var middlewareObjects = ConnectionServices.GetRequiredService<IEnumerable<IFtpMiddleware>>();
@@ -883,8 +991,22 @@ namespace FubarDev.FtpServer
                             break;
                         }
 
-                        while (commandReader.TryRead(out var command))
+                        while (commandReader.TryRead(out var pending))
                         {
+                            if (pending.Epoch != Volatile.Read(ref _commandEpoch))
+                            {
+                                // Collected from data that arrived before the most recent AUTH
+                                // TLS switch discarded it: never dispatch it, even though it made
+                                // it into the channel (e.g. a write that was already blocked on a
+                                // full channel when the switch happened). See
+                                // DiscardPendingPlaintextCommandsAsync.
+                                _logger?.LogDebug(
+                                    "Discarding {Command} collected before the most recent AUTH TLS switch",
+                                    pending.Command);
+                                continue;
+                            }
+
+                            var command = pending.Command;
                             PublishEvent(new FtpConnectionCommandReceivedEvent(command));
                             _logger?.Command(command);
                             var context = new FtpContext(command, _serverCommandChannel, this);
@@ -914,6 +1036,24 @@ namespace FubarDev.FtpServer
             {
                 return _observers.Select(x => x.Observer).ToList();
             }
+        }
+
+        /// <summary>
+        /// An <see cref="FtpCommand"/> tagged with the <see cref="_commandEpoch"/> that was
+        /// current when its bytes were read from the pipe. See
+        /// <see cref="DiscardPendingPlaintextCommandsAsync"/>.
+        /// </summary>
+        private readonly struct PendingCommand
+        {
+            public PendingCommand(FtpCommand command, int epoch)
+            {
+                Command = command;
+                Epoch = epoch;
+            }
+
+            public FtpCommand Command { get; }
+
+            public int Epoch { get; }
         }
 
         private class IdleCheck : IFtpConnectionStatusCheck

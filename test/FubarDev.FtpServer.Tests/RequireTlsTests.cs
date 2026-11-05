@@ -14,6 +14,8 @@ using System.Threading.Tasks;
 
 using FluentFTP;
 
+using FubarDev.FtpServer.Authentication;
+
 using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
@@ -33,6 +35,7 @@ namespace FubarDev.FtpServer.Tests
         /// <see cref="AuthTlsOptions.RequireTlsForLogin"/> is enabled and the control
         /// connection hasn't been secured with <c>AUTH TLS</c> yet.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task PlaintextUser_WhenTlsRequiredForLogin_IsRejectedWith530()
         {
@@ -67,6 +70,7 @@ namespace FubarDev.FtpServer.Tests
         /// rejected with <c>530</c> the same way <c>USER</c> is, and must not leave the
         /// connection logged in: a following command must still see <c>530 Not logged in.</c>.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task PlaintextPass_WhenTlsRequiredForLogin_IsRejectedWith530AndDoesNotLogIn()
         {
@@ -98,6 +102,7 @@ namespace FubarDev.FtpServer.Tests
         /// A plaintext <c>ACCT</c> must be rejected with <c>530</c> the same way <c>USER</c> is,
         /// and must not leave the connection logged in.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task PlaintextAcct_WhenTlsRequiredForLogin_IsRejectedWith530AndDoesNotLogIn()
         {
@@ -129,6 +134,7 @@ namespace FubarDev.FtpServer.Tests
         /// After a successful <c>AUTH TLS</c>, the (now encrypted) control connection may log
         /// in normally even though <see cref="AuthTlsOptions.RequireTlsForLogin"/> is enabled.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task User_AfterAuthTls_WhenTlsRequiredForLogin_Succeeds()
         {
@@ -150,6 +156,7 @@ namespace FubarDev.FtpServer.Tests
         /// When <see cref="AuthTlsOptions.RequireTlsForLogin"/> is left at its default
         /// (disabled), a plaintext login keeps working exactly as before.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task PlaintextUser_WhenTlsNotRequired_Succeeds()
         {
@@ -176,12 +183,14 @@ namespace FubarDev.FtpServer.Tests
         /// <summary>
         /// A data-transfer command without <c>PROT P</c> must be rejected with <c>521</c> while
         /// <see cref="AuthTlsOptions.RequireProtectedDataConnections"/> is enabled, and no data
-        /// may cross the data connection. Driven over a raw socket rather than FluentFTP: the
-        /// handler sends <c>150</c> unconditionally before the choke point runs (exactly as it
-        /// does when a data connection later fails for unrelated reasons, e.g. <c>425</c>), and
-        /// FluentFTP's high-level <c>UploadBytes</c> does not reliably surface that as a thrown
-        /// exception when no bytes ever follow the <c>150</c>.
+        /// may cross the data connection. Driven over a raw socket rather than FluentFTP:
+        /// FluentFTP's high-level <c>UploadBytes</c> does not reliably surface the rejection as a
+        /// thrown exception. <c>STOR</c> is one of <see cref="RequireTlsCommandMiddleware"/>'s
+        /// fast-path commands, so it is rejected immediately - no <c>150</c> is ever sent; see
+        /// <see cref="RequireTlsBypassTests.SiteBlst_WithoutProtP_IsRejectedWith521"/> for a
+        /// command that goes through the choke point instead, which still sends <c>150</c> first.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task Upload_WithoutProtP_WhenDataConnectionsMustBeProtected_IsRejectedWith521()
         {
@@ -203,11 +212,7 @@ namespace FubarDev.FtpServer.Tests
                 var dataPort = ParsePasvPort(pasvReply);
 
                 await WriteCommandAsync(stream, "STOR plain.txt");
-                var opening = await ReadLineAsync(stream);
-                Assert.StartsWith("150", opening);
-
-                var final = await ReadLineAsync(stream);
-                Assert.StartsWith("521", final);
+                Assert.StartsWith("521", await ReadLineAsync(stream));
 
                 // No file content may have crossed the data connection: connect to the
                 // advertised port and confirm nothing is ever sent over it.
@@ -235,6 +240,7 @@ namespace FubarDev.FtpServer.Tests
         /// Once the client has selected <c>PROT P</c>, data transfers succeed even while
         /// <see cref="AuthTlsOptions.RequireProtectedDataConnections"/> is enabled.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact(Timeout = 60000)]
         public async Task Upload_WithProtP_WhenDataConnectionsMustBeProtected_Succeeds()
         {

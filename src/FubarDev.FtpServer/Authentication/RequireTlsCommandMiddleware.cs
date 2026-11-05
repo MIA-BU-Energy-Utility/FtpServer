@@ -16,14 +16,19 @@ using Microsoft.Extensions.Options;
 namespace FubarDev.FtpServer.Authentication
 {
     /// <summary>
-    /// Enforces <see cref="AuthTlsOptions.RequireTlsForLogin"/>.
+    /// Enforces <see cref="AuthTlsOptions.RequireTlsForLogin"/>, and provides a fast path for
+    /// <see cref="AuthTlsOptions.RequireProtectedDataConnections"/>.
     /// </summary>
     /// <remarks>
-    /// <see cref="AuthTlsOptions.RequireProtectedDataConnections"/> is enforced separately, in
-    /// <see cref="ServerCommandHandlers.DataConnectionServerCommandHandler"/> - the single choke
-    /// point every data-transfer command (RETR, STOR, APPE, LIST, NLST, MLSD, SITE BLST, ...)
-    /// goes through to open its data connection, rather than a command-name list here that a new
-    /// or overlooked command could slip past.
+    /// The authoritative enforcement of <see cref="AuthTlsOptions.RequireProtectedDataConnections"/>
+    /// is in <see cref="ServerCommandHandlers.DataConnectionServerCommandHandler"/> - the single
+    /// choke point every data-transfer command goes through to open its data connection, so no
+    /// current or future command can slip past it. This middleware additionally rejects the
+    /// well-known data-transfer commands here, before the <c>150</c> that handler would otherwise
+    /// send first: RFC 4217 §9 expects an immediate <c>521</c>, and FluentFTP-style clients can
+    /// stall for their data-connection read timeout waiting on a <c>150</c> that's never going to
+    /// be followed by data. A command missing from this list still gets the correct (if slightly
+    /// later) <c>521</c> from the choke point.
     /// </remarks>
     public class RequireTlsCommandMiddleware : IFtpCommandMiddleware
     {
@@ -35,6 +40,18 @@ namespace FubarDev.FtpServer.Authentication
         private static readonly HashSet<string> _allowedBeforeLogin = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "AUTH", "ADAT", "FEAT", "SYST", "NOOP", "QUIT", "LOGOUT", "HELP", "OPTS", "PBSZ", "PROT", "LANG", "HOST",
+        };
+
+        /// <summary>
+        /// The well-known commands that unconditionally open a data connection. Deliberately not
+        /// exhaustive and not including e.g. <c>SITE</c> - see the remarks on this class: this is
+        /// only a fast path, and <c>SITE BLST</c>'s data-vs-control behavior depends on its
+        /// argument, which this middleware has no business parsing. The choke point is what
+        /// actually has to be correct for every command.
+        /// </summary>
+        private static readonly HashSet<string> _knownDataTransferCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "RETR", "STOR", "STOU", "APPE", "LIST", "NLST", "MLSD",
         };
 
         private readonly IOptions<AuthTlsOptions> _options;
@@ -52,16 +69,25 @@ namespace FubarDev.FtpServer.Authentication
         public Task InvokeAsync(FtpExecutionContext context, FtpCommandExecutionDelegate next)
         {
             var options = _options.Value;
-            if (!options.RequireTlsForLogin)
+            if (!options.RequireTlsForLogin && !options.RequireProtectedDataConnections)
             {
                 return next(context);
             }
 
             var secureConnectionFeature = context.Connection.Features.Get<ISecureConnectionFeature>();
-            if (!secureConnectionFeature.IsControlConnectionSecure
+
+            if (options.RequireTlsForLogin
+                && !secureConnectionFeature.IsControlConnectionSecure
                 && !_allowedBeforeLogin.Contains(context.Command.Name))
             {
                 return RejectAsync(context, 530, T(context, "TLS required: use AUTH TLS before logging in."));
+            }
+
+            if (options.RequireProtectedDataConnections
+                && !secureConnectionFeature.IsDataConnectionProtected
+                && _knownDataTransferCommands.Contains(context.Command.Name))
+            {
+                return RejectAsync(context, 521, T(context, "Data connections must be encrypted."));
             }
 
             return next(context);

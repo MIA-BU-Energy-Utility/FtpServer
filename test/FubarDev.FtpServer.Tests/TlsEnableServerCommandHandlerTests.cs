@@ -43,6 +43,7 @@ namespace FubarDev.FtpServer.Tests
         /// <see cref="ISecureConnectionFeature.IsControlConnectionSecure"/> and
         /// <see cref="ISecureConnectionFeature.IsDataConnectionProtected"/> - not just the former.
         /// </summary>
+        /// <returns>The task.</returns>
         [Fact]
         public async Task CloseEncryptedControlStream_ResetsControlSecureAndDataProtectedFlags()
         {

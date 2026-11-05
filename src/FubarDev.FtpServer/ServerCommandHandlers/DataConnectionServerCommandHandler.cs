@@ -6,10 +6,12 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
+using FubarDev.FtpServer.DataConnection;
 using FubarDev.FtpServer.Events;
 using FubarDev.FtpServer.Features;
 using FubarDev.FtpServer.ServerCommands;
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -22,6 +24,7 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
     {
         private readonly IFtpConnectionAccessor _connectionAccessor;
         private readonly IOptions<AuthTlsOptions> _authTlsOptions;
+        private readonly IOptions<PortCommandOptions> _portOptions;
         private readonly ILogger<DataConnectionServerCommandHandler>? _logger;
 
         /// <summary>
@@ -29,14 +32,17 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
         /// </summary>
         /// <param name="connectionAccessor">The FTP connection accessor.</param>
         /// <param name="authTlsOptions">Options for SSL/TLS connections.</param>
+        /// <param name="portOptions">The <c>PORT</c> command options.</param>
         /// <param name="logger">The logger.</param>
         public DataConnectionServerCommandHandler(
             IFtpConnectionAccessor connectionAccessor,
             IOptions<AuthTlsOptions> authTlsOptions,
+            IOptions<PortCommandOptions> portOptions,
             ILogger<DataConnectionServerCommandHandler>? logger = null)
         {
             _connectionAccessor = connectionAccessor;
             _authTlsOptions = authTlsOptions;
+            _portOptions = portOptions;
             _logger = logger;
         }
 
@@ -49,10 +55,30 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
 
             // Single choke point for every command that opens a data connection (RETR, STOR,
             // APPE, LIST/NLST, MLSD, SITE BLST, ...): reject here instead of listing command
-            // names, so nothing that transfers data over FTP-DATA can slip past this check.
+            // names, so nothing that transfers data over FTP-DATA can slip past this check. (A
+            // command-name list in RequireTlsCommandMiddleware also rejects the well-known cases
+            // before the 150 below is even sent; this is still what every command - known or not
+            // - ultimately goes through.)
             if (_authTlsOptions.Value.RequireProtectedDataConnections
                 && !connection.Features.Get<ISecureConnectionFeature>().IsDataConnectionProtected)
             {
+                // A PASV listener (or an already-bound active-mode socket) was set up for this
+                // command's data connection before it was even sent - close it instead of leaving
+                // it accepting connections until the next PASV/PORT/REIN, which stalls clients
+                // that connect to it expecting data that will now never arrive.
+                var dataConnectionFeature = connection.Features.Get<IFtpDataConnectionFeature>();
+                if (dataConnectionFeature != null)
+                {
+                    await dataConnectionFeature.DisposeAsync().ConfigureAwait(false);
+                    var activeDataConnectionFeatureFactory =
+                        connection.ConnectionServices.GetRequiredService<ActiveDataConnectionFeatureFactory>();
+                    var connectionFeature = connection.Features.Get<IConnectionFeature>();
+                    var replacementFeature = await activeDataConnectionFeatureFactory
+                       .CreateFeatureAsync(null, connectionFeature.RemoteEndPoint, _portOptions.Value.DataPort)
+                       .ConfigureAwait(false);
+                    connection.Features.Set(replacementFeature);
+                }
+
                 var deniedResponse = new FtpResponse(
                     521,
                     localizationFeature.Catalog.GetString("Data connections must be encrypted."));
