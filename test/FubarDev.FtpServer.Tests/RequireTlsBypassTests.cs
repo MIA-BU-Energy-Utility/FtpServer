@@ -39,17 +39,7 @@ namespace FubarDev.FtpServer.Tests
             _out = output;
         }
 
-        /// <summary>
-        /// A client that pipelines <c>USER</c>/<c>PASS</c>/<c>PWD</c> in the same write as
-        /// <c>AUTH TLS</c> must never have them executed as if they'd arrived over TLS: the
-        /// dispatcher must discard anything collected from the plaintext segment once TLS is
-        /// actually active. <paramref name="fillers"/> pads the command with enough <c>FEAT</c>s
-        /// to fill the connection's bounded command channel (capacity 5) exactly at <c>AUTH TLS</c>,
-        /// forcing the race between the collector and the TLS switch that a small, unpadded
-        /// command list (<c>fillers: 0</c>) might not reliably exercise.
-        /// </summary>
-        /// <param name="fillers">The number of filler <c>FEAT</c> commands pipelined behind <c>AUTH TLS</c>.</param>
-        /// <returns>The task.</returns>
+        // USER/PASS/PWD pipelined behind AUTH TLS get 421 and the connection closes, never executed.
         [Theory(Timeout = 60000)]
         [InlineData(0)]
         [InlineData(4)]
@@ -75,41 +65,15 @@ namespace FubarDev.FtpServer.Tests
 
                 var authReply = await ReadReplyAsync(plaintext);
                 _out.WriteLine("plaintext: " + authReply);
-                Assert.StartsWith("234", authReply);
+                Assert.StartsWith("421", authReply);
 
-                using var tls = new SslStream(plaintext, true, (_, _, _, _) => true);
-                await tls.AuthenticateAsClientAsync("localhost");
-
-                var repliesOverTls = new List<string>();
-                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-                {
-                    while (true)
-                    {
-                        string line;
-                        try
-                        {
-                            line = await ReadLineAsync(tls, cts.Token);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            break;
-                        }
-
-                        repliesOverTls.Add(line);
-                        _out.WriteLine("tls: " + line);
-                        if (line.StartsWith("257 ", StringComparison.Ordinal)
-                            || line.StartsWith("530 Not logged in", StringComparison.Ordinal))
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                // The pipelined USER/PASS must not have logged the connection in, and PWD must
-                // not have succeeded either - both would mean the plaintext commands executed as
-                // if they'd arrived over TLS.
-                Assert.DoesNotContain(repliesOverTls, line => line.StartsWith("230", StringComparison.Ordinal));
-                Assert.DoesNotContain(repliesOverTls, line => line.StartsWith("257 ", StringComparison.Ordinal));
+                // No TLS handshake ever happens, and the connection is closed outright: nothing
+                // pipelined behind AUTH - not even a harmless FEAT, let alone USER/PASS/PWD - was
+                // ever allowed through.
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var buffer = new byte[256];
+                var read = await plaintext.ReadAsync(buffer, cts.Token);
+                Assert.Equal(0, read);
             }
             finally
             {

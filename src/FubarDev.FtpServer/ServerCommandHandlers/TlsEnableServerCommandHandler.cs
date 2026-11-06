@@ -21,14 +21,7 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
     /// </summary>
     public class TlsEnableServerCommandHandler : IServerCommandHandler<TlsEnableServerCommand>
     {
-        /// <summary>
-        /// Bounds how long a single <c>AUTH TLS</c> switch may take. <see cref="SslStream.AuthenticateAsServerAsync(X509Certificate)"/>
-        /// - called from <see cref="EnableTlsAsync"/> - has no cancellation-token overload and
-        /// does not observe the connection's own token, so a client that pipelines commands
-        /// behind <c>AUTH TLS</c> and then disconnects before ever starting the handshake could
-        /// otherwise leave this handler, and everything waiting on <see cref="TlsEnableServerCommand.Completion"/>
-        /// (the command dispatcher, then connection shutdown), stuck forever.
-        /// </summary>
+        // AuthenticateAsServerAsync has no cancellation support, so this bounds the handshake instead.
         private static readonly TimeSpan _handshakeTimeout = TimeSpan.FromSeconds(30);
 
         private readonly IFtpConnectionAccessor _connectionAccessor;
@@ -67,55 +60,30 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
                             new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
                             cancellationToken)
                        .ConfigureAwait(false);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(new CloseConnectionServerCommand(), cancellationToken)
+                       .ConfigureAwait(false);
                     return;
                 }
 
                 try
                 {
-                    // Drop anything already collected from data that arrived over the
-                    // still-plaintext connection: it could be attacker-injected plaintext
-                    // commands riding on the same TCP segment as AUTH TLS (STARTTLS command
-                    // injection, CVE-2011-0411 class). Runs unconditionally, independent of
-                    // AuthTlsOptions.RequireTlsForLogin - the injection is a vulnerability on
-                    // its own.
-                    //
-                    // Must happen before EnableSslStreamAsync, not after: the receiver is still
-                    // paused and no TLS adapter exists yet here, so nothing but pre-switch
-                    // plaintext can possibly be queued. Discarding afterwards races the client's
-                    // first real TLS command - the new adapter starts reading immediately to
-                    // perform the handshake, and a command sent right after (as every real
-                    // client does, with no delay) can already be parsed and queued by the time a
-                    // post-enable discard runs, deleting it instead of the injection.
-                    if (connection is FtpConnection ftpConnection)
-                    {
-                        await ftpConnection.DiscardPendingPlaintextCommandsAsync(cancellationToken)
-                           .ConfigureAwait(false);
-                    }
-
                     await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
                        .WaitAsync(_handshakeTimeout, cancellationToken)
                        .ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    // Covers a timed-out handshake (TimeoutException) the same way as any other
-                    // negotiation failure. The abandoned EnableTlsAsync task (if that's what this
-                    // was) keeps running in the background - AuthenticateAsServerAsync still has
-                    // no way to be told to give up - but StopAsync's own teardown of the
-                    // underlying stream unblocks or discards it; what matters here is that this
-                    // handler, and everything waiting on it, no longer do.
                     var errorMessage = localizationFeature.Catalog.GetString("TLS negotiation error: {0}", ex.Message);
                     await serverCommandsFeature.ServerCommandWriter.WriteAsync(
                             new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
                             cancellationToken)
                        .ConfigureAwait(false);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(new CloseConnectionServerCommand(), cancellationToken)
+                       .ConfigureAwait(false);
                 }
             }
             finally
             {
-                // AUTH TLS awaits this before returning its own response: the command
-                // dispatcher must not move on to the next already-collected command before the
-                // switch (success or failure) is fully resolved.
                 command.SignalCompletion();
             }
         }

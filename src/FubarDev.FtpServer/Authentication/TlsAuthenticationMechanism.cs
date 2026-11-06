@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 using FubarDev.FtpServer.Features;
@@ -77,10 +78,20 @@ namespace FubarDev.FtpServer.Authentication
         public override async Task<IFtpResponse> HandleAuthAsync(string methodIdentifier, CancellationToken cancellationToken)
         {
             var serverCommandWriter = Connection.Features.Get<IServerCommandFeature>().ServerCommandWriter;
+            var barrier = Connection.Features.Get<IAuthTlsBarrierFeature>().Barrier;
+
+            if (barrier.TrailingPlaintextDetected)
+            {
+                return await RefuseWithInjectionDetectedAsync(serverCommandWriter, cancellationToken)
+                   .ConfigureAwait(false);
+            }
+
+            var tlsSwitch = barrier.TlsSwitch!;
             var hostSelector = Connection.ConnectionServices.GetRequiredService<IFtpHostSelector>();
 
             if (hostSelector.SelectedHost.Certificate == null)
             {
+                tlsSwitch.PlaintextPaused.TrySetResult(false);
                 return new FtpResponse(500, T("Syntax error, command unrecognized."));
             }
 
@@ -95,6 +106,16 @@ namespace FubarDev.FtpServer.Authentication
                     cancellationToken)
                .ConfigureAwait(false);
 
+            tlsSwitch.PlaintextPaused.TrySetResult(true);
+
+            var clear = await tlsSwitch.ReaderClear.Task.WaitAsync(cancellationToken)
+               .ConfigureAwait(false);
+            if (!clear)
+            {
+                return await RefuseWithInjectionDetectedAsync(serverCommandWriter, cancellationToken)
+                   .ConfigureAwait(false);
+            }
+
             var tlsEnableCommand = new TlsEnableServerCommand();
             await serverCommandWriter.WriteAsync(tlsEnableCommand, cancellationToken)
                .ConfigureAwait(false);
@@ -104,18 +125,6 @@ namespace FubarDev.FtpServer.Authentication
                     cancellationToken)
                .ConfigureAwait(false);
 
-            // Block the command dispatcher from moving on to whatever was already collected
-            // behind AUTH TLS until the switch is actually resolved: TlsEnableServerCommandHandler
-            // discards those pending commands as part of completing this task.
-            //
-            // Completion is only ever signaled by that handler actually running - and nothing
-            // guarantees it does. The server command loop (FtpConnection.SendResponsesAsync) that
-            // dequeues tlsEnableCommand can itself exit on this same cancellationToken - a client
-            // that disconnects right behind AUTH TLS can win that race - leaving the command sitting
-            // unprocessed in the channel forever and this await stuck with it: not spinning, just
-            // permanently blocked, which still leaks the connection (StopAsync can never finish
-            // tearing down a command dispatch that never returns). WaitAsync makes sure this
-            // connection's own cancellation can never be stranded on someone else's queue.
             await tlsEnableCommand.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             return new FtpResponse(234, null);
@@ -214,6 +223,18 @@ namespace FubarDev.FtpServer.Authentication
                     CancellationToken.None)
                .ConfigureAwait(false);
             return sslStream;
+        }
+
+        private async Task<IFtpResponse> RefuseWithInjectionDetectedAsync(
+            ChannelWriter<IServerCommand> serverCommandWriter,
+            CancellationToken cancellationToken)
+        {
+            var response = new FtpResponse(421, T("Command injection detected: no data may follow AUTH before the TLS handshake. Closing connection."));
+            await serverCommandWriter.WriteAsync(new SendResponseServerCommand(response), cancellationToken)
+               .ConfigureAwait(false);
+            await serverCommandWriter.WriteAsync(new CloseConnectionServerCommand(), cancellationToken)
+               .ConfigureAwait(false);
+            return new FtpResponse(421, null);
         }
     }
 }
