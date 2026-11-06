@@ -107,7 +107,16 @@ namespace FubarDev.FtpServer.Authentication
             // Block the command dispatcher from moving on to whatever was already collected
             // behind AUTH TLS until the switch is actually resolved: TlsEnableServerCommandHandler
             // discards those pending commands as part of completing this task.
-            await tlsEnableCommand.Completion.ConfigureAwait(false);
+            //
+            // Completion is only ever signaled by that handler actually running - and nothing
+            // guarantees it does. The server command loop (FtpConnection.SendResponsesAsync) that
+            // dequeues tlsEnableCommand can itself exit on this same cancellationToken - a client
+            // that disconnects right behind AUTH TLS can win that race - leaving the command sitting
+            // unprocessed in the channel forever and this await stuck with it: not spinning, just
+            // permanently blocked, which still leaks the connection (StopAsync can never finish
+            // tearing down a command dispatch that never returns). WaitAsync makes sure this
+            // connection's own cancellation can never be stranded on someone else's queue.
+            await tlsEnableCommand.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             return new FtpResponse(234, null);
         }

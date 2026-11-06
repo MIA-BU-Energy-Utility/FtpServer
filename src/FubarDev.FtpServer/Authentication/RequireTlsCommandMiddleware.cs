@@ -51,7 +51,7 @@ namespace FubarDev.FtpServer.Authentication
         /// </summary>
         private static readonly HashSet<string> _knownDataTransferCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "RETR", "STOR", "STOU", "APPE", "LIST", "NLST", "MLSD",
+            "RETR", "STOR", "STOU", "APPE", "LIST", "NLST", "LS", "MLSD",
         };
 
         private readonly IOptions<AuthTlsOptions> _options;

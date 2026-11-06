@@ -571,6 +571,18 @@ namespace FubarDev.FtpServer
         /// reader's own point of view - it just means "go look at what's buffered, which may be
         /// nothing, right now").
         /// </para>
+        /// <para>
+        /// The wait below must observe <paramref name="cancellationToken"/> for real (via
+        /// <c>Task.WaitAsync(TimeSpan, CancellationToken)</c>, which throws rather than merely
+        /// returning a completed-but-canceled task the way <c>Task.WhenAny</c> does): a client
+        /// that disconnects or RSTs mid-switch cancels this
+        /// connection's token, and an earlier version of this loop kept polling with no delay at
+        /// all once that happened - <c>Task.Delay(ms, alreadyCancelledToken)</c> completes
+        /// immediately as canceled instead of actually delaying, and <c>WhenAny</c> doesn't
+        /// rethrow that - pinning a core per leaked connection. <see cref="ReadCommandsFromPipeline"/>
+        /// also force-completes a stranded <see cref="_discardAcknowledgement"/> in its own
+        /// <c>finally</c>, so this can never wait forever even if that loop exits some other way.
+        /// </para>
         /// </remarks>
         internal async Task DiscardPendingPlaintextCommandsAsync(CancellationToken cancellationToken)
         {
@@ -580,14 +592,26 @@ namespace FubarDev.FtpServer
             {
                 _commandPipeReader.CancelPendingRead();
 
-                while (!acknowledgement.Task.IsCompleted)
+                while (true)
                 {
                     while (_ftpCommandChannel.Reader.TryRead(out _))
                     {
                     }
 
-                    await Task.WhenAny(acknowledgement.Task, Task.Delay(5, cancellationToken))
-                       .ConfigureAwait(false);
+                    try
+                    {
+                        await acknowledgement.Task.WaitAsync(TimeSpan.FromMilliseconds(5), cancellationToken)
+                           .ConfigureAwait(false);
+                        break;
+                    }
+                    catch (TimeoutException)
+                    {
+                        // Still waiting for ReadCommandsFromPipeline to catch up and acknowledge;
+                        // loop back and drain the channel again in case it's blocked on a full
+                        // one. A real cancellation (the client disconnected, or the connection is
+                        // shutting down for any other reason) throws OperationCanceledException
+                        // instead, which is deliberately not caught here.
+                    }
                 }
             }
             finally
@@ -819,6 +843,12 @@ namespace FubarDev.FtpServer
             finally
             {
                 reader.Complete();
+
+                // However this loop ends - the usual cancellation, or an exception it didn't
+                // expect - a discard request must never be left stranded: DiscardPendingPlaintextCommandsAsync
+                // would otherwise keep waiting (and keep draining the command channel) until
+                // something else happens to cancel the connection, if anything ever does.
+                Volatile.Read(ref _discardAcknowledgement)?.TrySetCanceled();
 
                 _logger?.LogDebug("Stopped reading commands");
 

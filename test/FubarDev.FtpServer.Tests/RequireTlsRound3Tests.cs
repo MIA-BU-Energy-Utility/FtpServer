@@ -366,6 +366,113 @@ namespace FubarDev.FtpServer.Tests
             }
         }
 
+        /// <summary>
+        /// A second <c>AUTH TLS</c>, sent once the control connection is already TLS-secured,
+        /// must not be able to re-enter the discard/epoch switch machinery: the client gets
+        /// <c>503</c>, and the connection remains fully usable afterwards.
+        /// </summary>
+        /// <returns>The task.</returns>
+        [Fact(Timeout = 60000)]
+        public async Task AuthTlsTwice_GetsBadSequence_AndConnectionStaysUsable()
+        {
+            var host = new Host(_out, requireTlsForLogin: true, requireProtectedDataConnections: false);
+            await host.InitializeAsync();
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync("127.0.0.1", host.Server.Port);
+                var plaintext = client.GetStream();
+                await ReadReplyAsync(plaintext, default);
+                await SendAsync(plaintext, "AUTH TLS");
+                Assert.StartsWith("234", await ReadReplyAsync(plaintext, default));
+
+                using var tls = new SslStream(plaintext, true, (_, _, _, _) => true);
+                await tls.AuthenticateAsClientAsync("localhost");
+
+                await SendAsync(tls, "AUTH TLS");
+                var secondAuth = await ReadReplyAsync(tls, default);
+                _out.WriteLine("second AUTH TLS -> " + secondAuth);
+                Assert.StartsWith("503", secondAuth);
+
+                await SendAsync(tls, "USER anonymous");
+                Assert.StartsWith("331", await ReadReplyAsync(tls, default));
+            }
+            finally
+            {
+                await host.DisposeAsync();
+            }
+        }
+
+        /// <summary>
+        /// A client that pipelines enough commands behind <c>AUTH TLS</c> to force the discard to
+        /// wait, then disconnects (cleanly or with an RST) instead of completing the handshake,
+        /// must not pin a thread polling forever or leak the connection: an earlier version of
+        /// <see cref="FtpConnection.DiscardPendingPlaintextCommandsAsync"/> used <c>Task.WhenAny</c>
+        /// with a <c>Task.Delay</c> that observed the connection's cancellation by completing
+        /// immediately (as canceled) rather than throwing, so the wait loop span with no delay at
+        /// all once the client disconnected.
+        /// </summary>
+        /// <param name="reset">Whether to force an RST on close (<c>true</c>) rather than a clean FIN.</param>
+        /// <returns>The task.</returns>
+        [Theory(Timeout = 75000)]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task DisconnectDuringDiscard_DoesNotSpinOrLeakConnections(bool reset)
+        {
+            var host = new Host(_out, requireTlsForLogin: true, requireProtectedDataConnections: false);
+            await host.InitializeAsync();
+            try
+            {
+                const int connections = 20;
+                const int fillers = 40;
+
+                for (var i = 0; i < connections; i++)
+                {
+                    using var client = new TcpClient();
+                    await client.ConnectAsync("127.0.0.1", host.Server.Port);
+                    var stream = client.GetStream();
+                    await ReadReplyAsync(stream, default);
+
+                    var pipelined = new StringBuilder("AUTH TLS\r\n");
+                    for (var f = 0; f < fillers; f++)
+                    {
+                        pipelined.Append("FEAT\r\n");
+                    }
+
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes(pipelined.ToString()));
+
+                    // Disconnect mid-switch, before ever starting the TLS handshake the server is
+                    // waiting for - this is exactly the window DiscardPendingPlaintextCommandsAsync
+                    // spends polling for an acknowledgement.
+                    if (reset)
+                    {
+                        client.LingerState = new LingerOption(true, 0);
+                    }
+                }
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                var lastLogged = -1L;
+                while (host.Server.Statistics.ActiveConnections > 0 && !cts.IsCancellationRequested)
+                {
+                    var current = host.Server.Statistics.ActiveConnections;
+                    if (current != lastLogged)
+                    {
+                        _out.WriteLine($"active connections: {current}");
+                        lastLogged = current;
+                    }
+
+                    await Task.Delay(250, CancellationToken.None);
+                }
+
+                _out.WriteLine($"final active connections: {host.Server.Statistics.ActiveConnections}");
+                Assert.Equal(0L, host.Server.Statistics.ActiveConnections);
+            }
+            finally
+            {
+                await host.DisposeAsync();
+            }
+        }
+
         private static int ParsePasvPort(string pasvReply)
         {
             var match = Regex.Match(pasvReply, @"\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)");

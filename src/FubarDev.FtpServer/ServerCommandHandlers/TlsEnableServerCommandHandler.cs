@@ -3,6 +3,7 @@
 // </copyright>
 
 using System;
+using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +21,16 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
     /// </summary>
     public class TlsEnableServerCommandHandler : IServerCommandHandler<TlsEnableServerCommand>
     {
+        /// <summary>
+        /// Bounds how long a single <c>AUTH TLS</c> switch may take. <see cref="SslStream.AuthenticateAsServerAsync(X509Certificate)"/>
+        /// - called from <see cref="EnableTlsAsync"/> - has no cancellation-token overload and
+        /// does not observe the connection's own token, so a client that pipelines commands
+        /// behind <c>AUTH TLS</c> and then disconnects before ever starting the handshake could
+        /// otherwise leave this handler, and everything waiting on <see cref="TlsEnableServerCommand.Completion"/>
+        /// (the command dispatcher, then connection shutdown), stuck forever.
+        /// </summary>
+        private static readonly TimeSpan _handshakeTimeout = TimeSpan.FromSeconds(30);
+
         private readonly IFtpConnectionAccessor _connectionAccessor;
         private readonly ILogger<TlsEnableServerCommandHandler>? _logger;
         private readonly X509Certificate? _serverCertificate;
@@ -82,10 +93,17 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
                     }
 
                     await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
+                       .WaitAsync(_handshakeTimeout, cancellationToken)
                        .ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
+                    // Covers a timed-out handshake (TimeoutException) the same way as any other
+                    // negotiation failure. The abandoned EnableTlsAsync task (if that's what this
+                    // was) keeps running in the background - AuthenticateAsServerAsync still has
+                    // no way to be told to give up - but StopAsync's own teardown of the
+                    // underlying stream unblocks or discards it; what matters here is that this
+                    // handler, and everything waiting on it, no longer do.
                     var errorMessage = localizationFeature.Catalog.GetString("TLS negotiation error: {0}", ex.Message);
                     await serverCommandsFeature.ServerCommandWriter.WriteAsync(
                             new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
