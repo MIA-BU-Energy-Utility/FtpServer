@@ -30,34 +30,16 @@ namespace FubarDev.FtpServer.Features
         CloseEncryptedStreamDelegate CloseEncryptedControlStream { get; set; }
 
         /// <summary>
-        /// Gets or sets a value indicating whether the control connection is currently
-        /// secured with TLS, either because <c>AUTH TLS</c> succeeded or because the
-        /// connection uses implicit FTPS.
+        /// Gets or sets a value indicating whether the control connection is currently secured
+        /// with TLS, either via <c>AUTH TLS</c> or implicit FTPS.
         /// </summary>
-        /// <remarks>
-        /// Default-implemented to fail closed (<see langword="false"/>, and a no-op setter) so
-        /// that an existing implementer of this interface - compiled before this member existed -
-        /// keeps working without being forced to implement it, and is treated as not secure
-        /// rather than crashing or silently appearing secure.
-        /// </remarks>
-        bool IsControlConnectionSecure
-        {
-            get => false;
-            set { }
-        }
+        bool IsControlConnectionSecure { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether the client requested protected data
         /// connections through <c>PROT P</c>. <c>PROT C</c> (the default) resets this to
         /// <see langword="false"/>.
         /// </summary>
-        /// <remarks>
-        /// Default-implemented to fail closed for the same reason as <see cref="IsControlConnectionSecure"/>.
-        /// </remarks>
-        bool IsDataConnectionProtected
-        {
-            get => false;
-            set { }
-        }
+        bool IsDataConnectionProtected { get; set; }
     }
 }
