@@ -2,7 +2,6 @@
 // Copyright (c) Fubar Development Junker. All rights reserved.
 // </copyright>
 
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -41,16 +40,9 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
             var connection = _connectionAccessor.FtpConnection;
             var networkStreamFeature = connection.Features.Get<INetworkStreamFeature>();
 
-            try
-            {
-                await networkStreamFeature.SecureConnectionAdapter.Receiver.ContinueAsync(cancellationToken)
-                   .ConfigureAwait(false);
-                _logger?.LogDebug("Receiver resumed");
-            }
-            catch (InvalidOperationException)
-            {
-                // A still-in-flight TLS switch (e.g. a timed-out handshake) hasn't installed its fallback adapter yet; nothing to resume.
-            }
+            await networkStreamFeature.SecureConnectionAdapter.Receiver.ContinueAsync(cancellationToken)
+               .ConfigureAwait(false);
+            _logger?.LogDebug("Receiver resumed");
         }
     }
 }

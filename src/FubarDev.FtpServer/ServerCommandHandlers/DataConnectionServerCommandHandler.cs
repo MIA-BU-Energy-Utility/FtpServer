@@ -53,19 +53,11 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
             var serverCommandWriter = connection.Features.Get<IServerCommandFeature>().ServerCommandWriter;
             var localizationFeature = connection.Features.Get<ILocalizationFeature>();
 
-            // Single choke point for every command that opens a data connection (RETR, STOR,
-            // APPE, LIST/NLST, MLSD, SITE BLST, ...): reject here instead of listing command
-            // names, so nothing that transfers data over FTP-DATA can slip past this check. (A
-            // command-name list in RequireTlsCommandMiddleware also rejects the well-known cases
-            // before the 150 below is even sent; this is still what every command - known or not
-            // - ultimately goes through.)
+            // Choke point: every data-opening command goes through here regardless of name.
             if (_authTlsOptions.Value.RequireProtectedDataConnections
                 && !connection.Features.Get<ISecureConnectionFeature>().IsDataConnectionProtected)
             {
-                // A PASV listener (or an already-bound active-mode socket) was set up for this
-                // command's data connection before it was even sent - close it instead of leaving
-                // it accepting connections until the next PASV/PORT/REIN, which stalls clients
-                // that connect to it expecting data that will now never arrive.
+                // Close the already-opened PASV/active listener instead of leaving it stranded.
                 var dataConnectionFeature = connection.Features.Get<IFtpDataConnectionFeature>();
                 if (dataConnectionFeature != null)
                 {

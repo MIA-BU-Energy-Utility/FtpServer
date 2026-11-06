@@ -70,6 +70,8 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
                     await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
                        .WaitAsync(_handshakeTimeout, cancellationToken)
                        .ConfigureAwait(false);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(new ResumeConnectionServerCommand(), cancellationToken)
+                       .ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

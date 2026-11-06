@@ -932,14 +932,14 @@ namespace FubarDev.FtpServer
                                 continue;
                             }
 
-                            Features.Set<IAuthTlsBarrierFeature>(new AuthTlsBarrierFeature(barrier));
+                            AuthTlsBarrierAmbient.Current = barrier;
                             try
                             {
                                 await requestDelegate(context).ConfigureAwait(false);
                             }
                             finally
                             {
-                                Features.Set<IAuthTlsBarrierFeature?>(null);
+                                AuthTlsBarrierAmbient.Current = null;
                                 barrier.TlsSwitch?.PlaintextPaused.TrySetResult(false);
                             }
                         }

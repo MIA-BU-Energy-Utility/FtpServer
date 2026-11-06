@@ -75,8 +75,7 @@ namespace FubarDev.FtpServer.CommandHandlers
             fileSystemFeature.FileSystem = new EmptyUnixFileSystem();
             fileSystemFeature.Path.Clear();
 
-            // Reset authorization (the log-out above is an async side effect on the membership
-            // provider; it doesn't clear this feature's own fields).
+            // Reset authorization (the log-out above is a side effect on the membership provider, not this feature).
 #pragma warning disable CS0618 // Type or member is obsolete
             authorizationInformationFeature.User = null;
 #pragma warning restore CS0618
@@ -99,13 +98,7 @@ namespace FubarDev.FtpServer.CommandHandlers
                     || featureItem.Key == typeof(IAuthorizationInformationFeature)
                     || featureItem.Key == typeof(ITransferConfigurationFeature))
                 {
-                    // These are reset in place above (encoding, file system, authorization,
-                    // transfer mode) or carry no per-login state worth discarding (localization),
-                    // and most are needed again immediately - including by this very response's
-                    // banner message and the encoding it's written with, and by the next USER's
-                    // authorization mechanisms. Unlike e.g. IConnectionFeature, none of these has
-                    // a connection-level fallback to fall back to if removed here: FtpConnection
-                    // registers each of them exactly once, directly on this feature collection.
+                    // Reset in place above or carries no per-login state; has no connection-level fallback.
                     continue;
                 }
 

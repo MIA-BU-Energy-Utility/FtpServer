@@ -11,10 +11,12 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 using FubarDev.FtpServer.ConnectionHandlers;
 using FubarDev.FtpServer.Features;
+using FubarDev.FtpServer.Features.Impl;
 using FubarDev.FtpServer.ServerCommandHandlers;
 using FubarDev.FtpServer.ServerCommands;
 
@@ -48,9 +50,11 @@ namespace FubarDev.FtpServer.Tests
         public async Task CloseEncryptedControlStream_ResetsControlSecureAndDataProtectedFlags()
         {
             var secureConnectionFeature = new FakeSecureConnectionFeature();
+            var serverCommandChannel = Channel.CreateUnbounded<IServerCommand>();
             var features = new FeatureCollection();
             features.Set<ISecureConnectionFeature>(secureConnectionFeature);
             features.Set<INetworkStreamFeature>(new FakeNetworkStreamFeature());
+            features.Set<IServerCommandFeature>(new ServerCommandFeature(serverCommandChannel.Writer));
 
             var connectionAccessor = new FakeFtpConnectionAccessor
             {

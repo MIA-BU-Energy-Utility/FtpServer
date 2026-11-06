@@ -298,14 +298,7 @@ namespace FubarDev.FtpServer
 
                 if (socketStream is SslStream { IsAuthenticated: true })
                 {
-                    // A control stream adapter (e.g. implicit FTPS) already wrapped the raw
-                    // socket in an authenticated TLS stream above, before any command could be
-                    // read in plaintext - reflect that here rather than trusting
-                    // AuthTlsOptions.ImplicitFtps alone, which could be set without the adapter
-                    // actually being registered. Checking the stream's own type (rather than just
-                    // "some adapter ran") also means a non-TLS IFtpControlStreamAdapter - e.g. a
-                    // logging or PROXY-protocol wrapper - can never be mistaken for one that
-                    // secures the connection.
+                    // Implicit FTPS already wrapped the raw socket; trust the stream's own type, not just that some adapter ran.
                     connection.Features.Get<ISecureConnectionFeature>().IsControlConnectionSecure = true;
                 }
 

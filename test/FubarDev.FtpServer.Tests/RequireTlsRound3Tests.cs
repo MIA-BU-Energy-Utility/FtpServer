@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -526,6 +527,119 @@ namespace FubarDev.FtpServer.Tests
             finally
             {
                 await host.DisposeAsync();
+            }
+        }
+
+        // Regression for the R5 blocker: PlaintextPaused must not resolve until the receiver is actually paused.
+        [Fact(Timeout = 300000)]
+        public async Task R5_InjectionRacingQueuedPause()
+        {
+            var host = new Host(_out, requireTlsForLogin: false, requireProtectedDataConnections: false);
+            await host.InitializeAsync();
+            try
+            {
+                var gapsMicroseconds = new[] { 0, 50, 200, 1000 };
+                const int iterations = 300;
+                var loggedIn = 0;
+                var byGap = new Dictionary<int, int>();
+
+                for (var i = 0; i < iterations; i++)
+                {
+                    var gap = gapsMicroseconds[i % gapsMicroseconds.Length];
+
+                    using var client = new TcpClient { NoDelay = true };
+                    await client.ConnectAsync("127.0.0.1", host.Server.Port);
+                    var plaintext = client.GetStream();
+                    await ReadReplyAsync(plaintext, default);
+
+                    await plaintext.WriteAsync(Encoding.ASCII.GetBytes("AUTH TLS\r\n"));
+                    await plaintext.FlushAsync();
+
+                    var sw = Stopwatch.StartNew();
+                    while (sw.Elapsed.TotalMilliseconds * 1000.0 < gap)
+                    {
+                    }
+
+                    await plaintext.WriteAsync(Encoding.ASCII.GetBytes("USER anonymous\r\nPASS test@test.net\r\nPWD\r\n"));
+                    await plaintext.FlushAsync();
+
+                    var sawLogin = await ProbeForLoginAsync(plaintext);
+                    if (sawLogin)
+                    {
+                        loggedIn++;
+                        byGap[gap] = byGap.GetValueOrDefault(gap) + 1;
+                    }
+                }
+
+                foreach (var gap in gapsMicroseconds)
+                {
+                    _out.WriteLine($"gap {gap}us: logged in {byGap.GetValueOrDefault(gap)}/{iterations / gapsMicroseconds.Length}");
+                }
+
+                _out.WriteLine($"total logged in: {loggedIn}/{iterations}");
+                Assert.Equal(0, loggedIn);
+            }
+            finally
+            {
+                await host.DisposeAsync();
+            }
+        }
+
+        private static async Task<bool> ProbeForLoginAsync(NetworkStream plaintext)
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            string authReply;
+            try
+            {
+                authReply = await ReadReplyAsync(plaintext, cts.Token);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            if (!authReply.StartsWith("234", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            SslStream tls;
+            try
+            {
+                tls = new SslStream(plaintext, true, (_, _, _, _) => true);
+                using var handshakeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await tls.AuthenticateAsClientAsync(
+                    new SslClientAuthenticationOptions { TargetHost = "localhost" },
+                    handshakeTimeout.Token);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            using (tls)
+            {
+                try
+                {
+                    await SendAsync(tls, "SYST");
+                    while (true)
+                    {
+                        var line = await ReadLineAsync(tls, cts.Token);
+                        if (line.StartsWith("230", StringComparison.Ordinal) || line.StartsWith("331", StringComparison.Ordinal))
+                        {
+                            return true;
+                        }
+
+                        if (line.StartsWith("215", StringComparison.Ordinal))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
             }
         }
 

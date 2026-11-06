@@ -78,11 +78,17 @@ namespace FubarDev.FtpServer.Authentication
         public override async Task<IFtpResponse> HandleAuthAsync(string methodIdentifier, CancellationToken cancellationToken)
         {
             var serverCommandWriter = Connection.Features.Get<IServerCommandFeature>().ServerCommandWriter;
-            var barrier = Connection.Features.Get<IAuthTlsBarrierFeature>().Barrier;
+            var barrier = AuthTlsBarrierAmbient.Current;
+
+            if (barrier == null)
+            {
+                return await RefuseAndCloseAsync(serverCommandWriter, "No AUTH barrier verdict available.", cancellationToken)
+                   .ConfigureAwait(false);
+            }
 
             if (barrier.TrailingPlaintextDetected)
             {
-                return await RefuseWithInjectionDetectedAsync(serverCommandWriter, cancellationToken)
+                return await RefuseAndCloseAsync(serverCommandWriter, "Command injection detected: no data may follow AUTH before the TLS handshake.", cancellationToken)
                    .ConfigureAwait(false);
             }
 
@@ -95,10 +101,19 @@ namespace FubarDev.FtpServer.Authentication
                 return new FtpResponse(500, T("Syntax error, command unrecognized."));
             }
 
-            await serverCommandWriter.WriteAsync(
-                    new PauseConnectionServerCommand(),
-                    cancellationToken)
+            var pauseCommand = new PauseConnectionServerCommand();
+            await serverCommandWriter.WriteAsync(pauseCommand, cancellationToken)
                .ConfigureAwait(false);
+
+            var paused = await pauseCommand.Paused.WaitAsync(cancellationToken)
+               .ConfigureAwait(false);
+            tlsSwitch.PlaintextPaused.TrySetResult(paused);
+
+            if (!paused)
+            {
+                return await RefuseAndCloseAsync(serverCommandWriter, "Failed to pause the connection.", cancellationToken)
+                   .ConfigureAwait(false);
+            }
 
             var enableTlsResponse = new FtpResponse(234, T("Enabling TLS Connection"));
             await serverCommandWriter.WriteAsync(
@@ -106,23 +121,16 @@ namespace FubarDev.FtpServer.Authentication
                     cancellationToken)
                .ConfigureAwait(false);
 
-            tlsSwitch.PlaintextPaused.TrySetResult(true);
-
             var clear = await tlsSwitch.ReaderClear.Task.WaitAsync(cancellationToken)
                .ConfigureAwait(false);
             if (!clear)
             {
-                return await RefuseWithInjectionDetectedAsync(serverCommandWriter, cancellationToken)
+                return await RefuseAndCloseAsync(serverCommandWriter, "Command injection detected: no data may follow AUTH before the TLS handshake.", cancellationToken)
                    .ConfigureAwait(false);
             }
 
             var tlsEnableCommand = new TlsEnableServerCommand();
             await serverCommandWriter.WriteAsync(tlsEnableCommand, cancellationToken)
-               .ConfigureAwait(false);
-
-            await serverCommandWriter.WriteAsync(
-                    new ResumeConnectionServerCommand(),
-                    cancellationToken)
                .ConfigureAwait(false);
 
             await tlsEnableCommand.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -225,11 +233,12 @@ namespace FubarDev.FtpServer.Authentication
             return sslStream;
         }
 
-        private async Task<IFtpResponse> RefuseWithInjectionDetectedAsync(
+        private async Task<IFtpResponse> RefuseAndCloseAsync(
             ChannelWriter<IServerCommand> serverCommandWriter,
+            string message,
             CancellationToken cancellationToken)
         {
-            var response = new FtpResponse(421, T("Command injection detected: no data may follow AUTH before the TLS handshake. Closing connection."));
+            var response = new FtpResponse(421, T(message));
             await serverCommandWriter.WriteAsync(new SendResponseServerCommand(response), cancellationToken)
                .ConfigureAwait(false);
             await serverCommandWriter.WriteAsync(new CloseConnectionServerCommand(), cancellationToken)
