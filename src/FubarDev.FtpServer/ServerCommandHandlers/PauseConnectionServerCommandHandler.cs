@@ -37,12 +37,21 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
         /// <inheritdoc />
         public async Task ExecuteAsync(PauseConnectionServerCommand command, CancellationToken cancellationToken)
         {
-            var connection = _connectionAccessor.FtpConnection;
-            var networkStreamFeature = connection.Features.Get<INetworkStreamFeature>();
+            var paused = false;
+            try
+            {
+                var connection = _connectionAccessor.FtpConnection;
+                var networkStreamFeature = connection.Features.Get<INetworkStreamFeature>();
 
-            await networkStreamFeature.SecureConnectionAdapter.Receiver.PauseAsync(cancellationToken)
-               .ConfigureAwait(false);
-            _logger?.LogDebug("Receiver paused");
+                await networkStreamFeature.SecureConnectionAdapter.Receiver.PauseAsync(cancellationToken)
+                   .ConfigureAwait(false);
+                paused = true;
+                _logger?.LogDebug("Receiver paused");
+            }
+            finally
+            {
+                command.SignalPaused(paused);
+            }
         }
     }
 }

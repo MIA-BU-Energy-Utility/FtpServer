@@ -6,6 +6,7 @@
 //-----------------------------------------------------------------------
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -70,7 +71,7 @@ namespace FubarDev.FtpServer
 
         private readonly Task _commandReader;
 
-        private readonly Channel<FtpCommand> _ftpCommandChannel = Channel.CreateBounded<FtpCommand>(5);
+        private readonly Channel<PendingCommand> _ftpCommandChannel = Channel.CreateBounded<PendingCommand>(5);
 
         private readonly int? _dataPort;
 
@@ -499,6 +500,59 @@ namespace FubarDev.FtpServer
             _cancellationTokenSource.Cancel(true);
         }
 
+        // Writes nothing past AUTH: the reader is the only thing that can see whether plaintext rode in behind it.
+        private async Task<(bool AuthFound, AuthTlsSwitch? Switch)> CollectAndQueueCommandsAsync(
+            ReadOnlySequence<byte> buffer,
+            FtpCommandCollector collector,
+            ChannelWriter<PendingCommand> commandWriter,
+            CancellationToken cancellationToken)
+        {
+            var commands = new List<FtpCommand>();
+            var position = buffer.Start;
+            while (buffer.TryGet(ref position, out var memory))
+            {
+                commands.AddRange(collector.Collect(memory.Span));
+            }
+
+            var authIndex = commands.FindIndex(
+                command => string.Equals(command.Name, "AUTH", StringComparison.OrdinalIgnoreCase));
+
+            if (authIndex == -1)
+            {
+                foreach (var command in commands)
+                {
+                    await commandWriter.WriteAsync(new PendingCommand(command), cancellationToken)
+                       .ConfigureAwait(false);
+                }
+
+                return (false, null);
+            }
+
+            for (var i = 0; i < authIndex; i++)
+            {
+                await commandWriter.WriteAsync(new PendingCommand(commands[i]), cancellationToken)
+                   .ConfigureAwait(false);
+            }
+
+            var authCommand = commands[authIndex];
+            var hasTrailingPlaintext = authIndex < commands.Count - 1 || !collector.IsEmpty;
+            if (hasTrailingPlaintext)
+            {
+                await commandWriter.WriteAsync(
+                        new PendingCommand(authCommand, AuthBarrierInfo.TrailingPlaintext),
+                        cancellationToken)
+                   .ConfigureAwait(false);
+                return (true, null);
+            }
+
+            var tlsSwitch = new AuthTlsSwitch();
+            await commandWriter.WriteAsync(
+                    new PendingCommand(authCommand, AuthBarrierInfo.Clean(tlsSwitch)),
+                    cancellationToken)
+               .ConfigureAwait(false);
+            return (true, tlsSwitch);
+        }
+
         /// <summary>
         /// Send responses to the client.
         /// </summary>
@@ -597,13 +651,14 @@ namespace FubarDev.FtpServer
             Closed?.Invoke(this, EventArgs.Empty);
         }
 
+        // Only this loop parses bytes, so only it can enforce "nothing after AUTH" (CollectAndQueueCommandsAsync).
         private async Task ReadCommandsFromPipeline(
             PipeReader reader,
-            ChannelWriter<FtpCommand> commandWriter,
+            ChannelWriter<PendingCommand> commandWriter,
             CancellationToken cancellationToken)
         {
             var collector = new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding);
-
+            AuthTlsSwitch? pendingSwitch = null;
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
@@ -611,25 +666,50 @@ namespace FubarDev.FtpServer
                     var result = await reader.ReadAsync(cancellationToken)
                        .ConfigureAwait(false);
 
-                    var buffer = result.Buffer;
-                    var position = buffer.Start;
-                    while (buffer.TryGet(ref position, out var memory))
-                    {
-                        var commands = collector.Collect(memory.Span);
-                        foreach (var command in commands)
-                        {
-                            await commandWriter.WriteAsync(command, cancellationToken)
-                               .ConfigureAwait(false);
-                        }
-                    }
+                    var (authFound, tlsSwitch) = await CollectAndQueueCommandsAsync(result.Buffer, collector, commandWriter, cancellationToken)
+                       .ConfigureAwait(false);
 
                     // Required to signal an end of the read operation.
-                    reader.AdvanceTo(buffer.End);
+                    reader.AdvanceTo(result.Buffer.End);
 
                     // Stop reading if there's no more data coming.
                     if (result.IsCompleted)
                     {
                         break;
+                    }
+
+                    if (authFound && tlsSwitch == null)
+                    {
+                        break;
+                    }
+
+                    if (tlsSwitch != null)
+                    {
+                        pendingSwitch = tlsSwitch;
+                        var isPausing = await tlsSwitch.PlaintextPaused.Task.WaitAsync(cancellationToken)
+                           .ConfigureAwait(false);
+                        if (!isPausing)
+                        {
+                            pendingSwitch = null;
+                            continue;
+                        }
+
+                        var clear = true;
+                        if (reader.TryRead(out var lateResult))
+                        {
+                            clear = lateResult.Buffer.IsEmpty;
+                            reader.AdvanceTo(lateResult.Buffer.End);
+                        }
+
+                        tlsSwitch.ReaderClear.TrySetResult(clear);
+                        pendingSwitch = null;
+
+                        if (!clear)
+                        {
+                            break;
+                        }
+
+                        collector = new FtpCommandCollector(() => Features.Get<IEncodingFeature>().Encoding);
                     }
                 }
             }
@@ -665,6 +745,7 @@ namespace FubarDev.FtpServer
             finally
             {
                 reader.Complete();
+                pendingSwitch?.ReaderClear.TrySetResult(false);
 
                 _logger?.LogDebug("Stopped reading commands");
 
@@ -782,7 +863,7 @@ namespace FubarDev.FtpServer
             OnClosed();
         }
 
-        private async Task CommandChannelDispatcherAsync(ChannelReader<FtpCommand> commandReader, CancellationToken cancellationToken)
+        private async Task CommandChannelDispatcherAsync(ChannelReader<PendingCommand> commandReader, CancellationToken cancellationToken)
         {
             // Initialize middleware objects
             var middlewareObjects = ConnectionServices.GetRequiredService<IEnumerable<IFtpMiddleware>>();
@@ -837,13 +918,30 @@ namespace FubarDev.FtpServer
                             break;
                         }
 
-                        while (commandReader.TryRead(out var command))
+                        while (commandReader.TryRead(out var pending))
                         {
+                            var command = pending.Command;
                             PublishEvent(new FtpConnectionCommandReceivedEvent(command));
                             _logger?.Command(command);
                             var context = new FtpContext(command, _serverCommandChannel, this);
-                            await requestDelegate(context)
-                               .ConfigureAwait(false);
+
+                            var barrier = pending.AuthBarrier;
+                            if (barrier == null)
+                            {
+                                await requestDelegate(context).ConfigureAwait(false);
+                                continue;
+                            }
+
+                            AuthTlsBarrierAmbient.Current = barrier;
+                            try
+                            {
+                                await requestDelegate(context).ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                AuthTlsBarrierAmbient.Current = null;
+                                barrier.TlsSwitch?.PlaintextPaused.TrySetResult(false);
+                            }
                         }
                     }
                 }
@@ -868,6 +966,50 @@ namespace FubarDev.FtpServer
             {
                 return _observers.Select(x => x.Observer).ToList();
             }
+        }
+
+        private readonly struct PendingCommand
+        {
+            public PendingCommand(FtpCommand command, AuthBarrierInfo? authBarrier = null)
+            {
+                Command = command;
+                AuthBarrier = authBarrier;
+            }
+
+            public FtpCommand Command { get; }
+
+            public AuthBarrierInfo? AuthBarrier { get; }
+        }
+
+        // One-shot signals coordinating an AUTH-driven TLS switch between the reader and TlsAuthenticationMechanism.HandleAuthAsync.
+        internal sealed class AuthTlsSwitch
+        {
+            public AuthTlsSwitch()
+            {
+                PlaintextPaused = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                ReaderClear = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            public TaskCompletionSource<bool> PlaintextPaused { get; }
+
+            public TaskCompletionSource<bool> ReaderClear { get; }
+        }
+
+        internal sealed class AuthBarrierInfo
+        {
+            public static readonly AuthBarrierInfo TrailingPlaintext = new AuthBarrierInfo(true, null);
+
+            private AuthBarrierInfo(bool trailingPlaintextDetected, AuthTlsSwitch? tlsSwitch)
+            {
+                TrailingPlaintextDetected = trailingPlaintextDetected;
+                TlsSwitch = tlsSwitch;
+            }
+
+            public bool TrailingPlaintextDetected { get; }
+
+            public AuthTlsSwitch? TlsSwitch { get; }
+
+            public static AuthBarrierInfo Clean(AuthTlsSwitch tlsSwitch) => new AuthBarrierInfo(false, tlsSwitch);
         }
 
         private class IdleCheck : IFtpConnectionStatusCheck
@@ -1008,6 +1150,12 @@ namespace FubarDev.FtpServer
 
             /// <inheritdoc />
             public CloseEncryptedStreamDelegate CloseEncryptedControlStream { get; set; } = ct => Task.CompletedTask;
+
+            /// <inheritdoc />
+            public bool IsControlConnectionSecure { get; set; }
+
+            /// <inheritdoc />
+            public bool IsDataConnectionProtected { get; set; }
         }
 
         private class DuplexPipe : IDuplexPipe

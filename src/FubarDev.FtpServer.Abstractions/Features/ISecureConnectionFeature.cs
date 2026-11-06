@@ -28,5 +28,18 @@ namespace FubarDev.FtpServer.Features
         /// </summary>
         /// <remarks>This doesn't apply to encrypted data streams.</remarks>
         CloseEncryptedStreamDelegate CloseEncryptedControlStream { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the control connection is currently secured
+        /// with TLS, either via <c>AUTH TLS</c> or implicit FTPS.
+        /// </summary>
+        bool IsControlConnectionSecure { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the client requested protected data
+        /// connections through <c>PROT P</c>. <c>PROT C</c> (the default) resets this to
+        /// <see langword="false"/>.
+        /// </summary>
+        bool IsDataConnectionProtected { get; set; }
     }
 }

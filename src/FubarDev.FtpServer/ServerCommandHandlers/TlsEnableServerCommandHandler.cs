@@ -3,6 +3,7 @@
 // </copyright>
 
 using System;
+using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +21,9 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
     /// </summary>
     public class TlsEnableServerCommandHandler : IServerCommandHandler<TlsEnableServerCommand>
     {
+        // AuthenticateAsServerAsync has no cancellation support, so this bounds the handshake instead.
+        private static readonly TimeSpan _handshakeTimeout = TimeSpan.FromSeconds(30);
+
         private readonly IFtpConnectionAccessor _connectionAccessor;
         private readonly ILogger<TlsEnableServerCommandHandler>? _logger;
         private readonly X509Certificate? _serverCertificate;
@@ -43,32 +47,46 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
         /// <inheritdoc />
         public async Task ExecuteAsync(TlsEnableServerCommand command, CancellationToken cancellationToken)
         {
-            var connection = _connectionAccessor.FtpConnection;
-            var serverCommandsFeature = connection.Features.Get<IServerCommandFeature>();
-            var localizationFeature = connection.Features.Get<ILocalizationFeature>();
-
-            if (_serverCertificate == null)
-            {
-                var errorMessage = localizationFeature.Catalog.GetString("TLS not configured");
-                await serverCommandsFeature.ServerCommandWriter.WriteAsync(
-                        new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
-                        cancellationToken)
-                   .ConfigureAwait(false);
-                return;
-            }
-
             try
             {
-                await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
-                   .ConfigureAwait(false);
+                var connection = _connectionAccessor.FtpConnection;
+                var serverCommandsFeature = connection.Features.Get<IServerCommandFeature>();
+                var localizationFeature = connection.Features.Get<ILocalizationFeature>();
+
+                if (_serverCertificate == null)
+                {
+                    var errorMessage = localizationFeature.Catalog.GetString("TLS not configured");
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(
+                            new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
+                            cancellationToken)
+                       .ConfigureAwait(false);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(new CloseConnectionServerCommand(), cancellationToken)
+                       .ConfigureAwait(false);
+                    return;
+                }
+
+                try
+                {
+                    await EnableTlsAsync(connection, _serverCertificate, _logger, cancellationToken)
+                       .WaitAsync(_handshakeTimeout, cancellationToken)
+                       .ConfigureAwait(false);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(new ResumeConnectionServerCommand(), cancellationToken)
+                       .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    var errorMessage = localizationFeature.Catalog.GetString("TLS negotiation error: {0}", ex.Message);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(
+                            new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
+                            cancellationToken)
+                       .ConfigureAwait(false);
+                    await serverCommandsFeature.ServerCommandWriter.WriteAsync(new CloseConnectionServerCommand(), cancellationToken)
+                       .ConfigureAwait(false);
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                var errorMessage = localizationFeature.Catalog.GetString("TLS negotiation error: {0}", ex.Message);
-                await serverCommandsFeature.ServerCommandWriter.WriteAsync(
-                        new SendResponseServerCommand(new FtpResponse(421, errorMessage)),
-                        cancellationToken)
-                   .ConfigureAwait(false);
+                command.SignalCompletion();
             }
         }
 
@@ -100,6 +118,7 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
                     networkStreamFeature,
                     secureConnectionFeature,
                     ct);
+            secureConnectionFeature.IsControlConnectionSecure = true;
         }
 
         private static async Task CloseEncryptedControlConnectionAsync(
@@ -112,6 +131,8 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
 
             secureConnectionFeature.CreateEncryptedStream = Task.FromResult;
             secureConnectionFeature.CloseEncryptedControlStream = ct => Task.CompletedTask;
+            secureConnectionFeature.IsControlConnectionSecure = false;
+            secureConnectionFeature.IsDataConnectionProtected = false;
         }
     }
 }

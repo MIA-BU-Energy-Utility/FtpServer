@@ -74,6 +74,7 @@ namespace FubarDev.FtpServer.ConnectionHandlers
         }
 
         /// <inheritdoc />
+        // Fallback must wrap StartAsync, not just the constructor: StartAsync runs the handshake and is what actually fails.
         public async Task EnableSslStreamAsync(X509Certificate certificate, CancellationToken cancellationToken)
         {
             await StopAsync(cancellationToken)
@@ -87,6 +88,8 @@ namespace FubarDev.FtpServer.ConnectionHandlers
                     certificate,
                     _connectionClosed,
                     _loggerFactory);
+                await StartAsync(cancellationToken)
+                   .ConfigureAwait(false);
             }
             catch
             {
@@ -95,12 +98,9 @@ namespace FubarDev.FtpServer.ConnectionHandlers
                     _connectionPipe,
                     _connectionClosed,
                     _loggerFactory);
-                throw;
-            }
-            finally
-            {
                 await StartAsync(cancellationToken)
                    .ConfigureAwait(false);
+                throw;
             }
         }
 

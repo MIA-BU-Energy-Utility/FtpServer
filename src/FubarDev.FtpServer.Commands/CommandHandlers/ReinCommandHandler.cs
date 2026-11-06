@@ -75,6 +75,16 @@ namespace FubarDev.FtpServer.CommandHandlers
             fileSystemFeature.FileSystem = new EmptyUnixFileSystem();
             fileSystemFeature.Path.Clear();
 
+            // Reset authorization (the log-out above is a side effect on the membership provider, not this feature).
+#pragma warning disable CS0618 // Type or member is obsolete
+            authorizationInformationFeature.User = null;
+#pragma warning restore CS0618
+            authorizationInformationFeature.FtpUser = null;
+            authorizationInformationFeature.MembershipProvider = null;
+
+            // Reset the transfer mode back to its connection-default.
+            Connection.Features.Get<ITransferConfigurationFeature>().TransferMode = new FtpTransferMode(FtpFileType.Ascii);
+
             // Remove the control connection encryption
             await secureConnectionFeature.CloseEncryptedControlStream(cancellationToken)
                .ConfigureAwait(false);
@@ -82,6 +92,16 @@ namespace FubarDev.FtpServer.CommandHandlers
             // Dispose and remove all features (if disposable)
             foreach (var featureItem in Connection.Features)
             {
+                if (featureItem.Key == typeof(IEncodingFeature)
+                    || featureItem.Key == typeof(IFileSystemFeature)
+                    || featureItem.Key == typeof(ILocalizationFeature)
+                    || featureItem.Key == typeof(IAuthorizationInformationFeature)
+                    || featureItem.Key == typeof(ITransferConfigurationFeature))
+                {
+                    // Reset in place above or carries no per-login state; has no connection-level fallback.
+                    continue;
+                }
+
                 try
                 {
                     switch (featureItem.Value)

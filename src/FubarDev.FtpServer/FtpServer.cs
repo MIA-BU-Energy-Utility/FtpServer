@@ -10,6 +10,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Channels;
@@ -294,6 +295,12 @@ namespace FubarDev.FtpServer
                 var connection = scope.ServiceProvider.GetRequiredService<IFtpConnection>();
                 var connectionAccessor = scope.ServiceProvider.GetRequiredService<IFtpConnectionAccessor>();
                 connectionAccessor.FtpConnection = connection;
+
+                if (socketStream is SslStream { IsAuthenticated: true })
+                {
+                    // Implicit FTPS already wrapped the raw socket; trust the stream's own type, not just that some adapter ran.
+                    connection.Features.Get<ISecureConnectionFeature>().IsControlConnectionSecure = true;
+                }
 
                 // Remember connection
                 if (!_connections.TryAdd(connection, new FtpConnectionInfo(scope)))
