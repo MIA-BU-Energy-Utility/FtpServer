@@ -249,13 +249,9 @@ namespace FubarDev.FtpServer.Tests
             }
         }
 
-        /// <summary>
-        /// <c>REIN</c> resets the current directory, transfer type, and login - not just the TLS
-        /// state flags covered elsewhere in this suite.
-        /// </summary>
-        /// <returns>The task.</returns>
+        // REIN rebuilds the whole session layer (path, transfer type, language, login) from the same initializer a new connection uses.
         [Fact(Timeout = 60000)]
-        public async Task Rein_ResetsCwdTypeAndLogin()
+        public async Task Rein_ResetsCwdTypeLanguageAndLogin()
         {
             var host = new Host(_out, requireTlsForLogin: false, requireProtectedDataConnections: false);
             await host.InitializeAsync();
@@ -274,8 +270,26 @@ namespace FubarDev.FtpServer.Tests
                     return reply;
                 }
 
+                async Task<string> FullReplyAsync(string cmd)
+                {
+                    await SendAsync(stream, cmd);
+                    var all = new StringBuilder();
+                    while (true)
+                    {
+                        var line = await ReadLineAsync(stream, default);
+                        all.AppendLine(line);
+                        if (line.Length >= 4 && char.IsDigit(line[0]) && line[3] == ' ')
+                        {
+                            _out.WriteLine($"{cmd} ->\n{all}");
+                            return all.ToString();
+                        }
+                    }
+                }
+
                 await CommandAsync("USER anonymous");
                 await CommandAsync("PASS test@test.net");
+                await CommandAsync("LANG da");
+                Assert.DoesNotContain("LANG en*", await FullReplyAsync("FEAT"));
                 await CommandAsync("MKD secretdir");
                 await CommandAsync("CWD secretdir");
                 await CommandAsync("TYPE I");
@@ -283,12 +297,55 @@ namespace FubarDev.FtpServer.Tests
                 Assert.StartsWith("257 \"/secretdir\"", await CommandAsync("PWD"));
 
                 Assert.StartsWith("220", await CommandAsync("REIN"));
+                Assert.Contains("LANG en*", await FullReplyAsync("FEAT"));
                 Assert.StartsWith("530", await CommandAsync("PWD"));
                 Assert.StartsWith("530", await CommandAsync("LIST"));
 
                 await CommandAsync("USER anonymous");
                 await CommandAsync("PASS test@test.net");
                 Assert.StartsWith("257 \"/\"", await CommandAsync("PWD"));
+            }
+            finally
+            {
+                await host.DisposeAsync();
+            }
+        }
+
+        // REIN with an open PASV listener must close it, same as a 521 rejection does.
+        [Fact(Timeout = 60000)]
+        public async Task Rein_WithOpenPasvListener_ClosesIt()
+        {
+            var host = new Host(_out, requireTlsForLogin: false, requireProtectedDataConnections: false);
+            await host.InitializeAsync();
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync("127.0.0.1", host.Server.Port);
+                var stream = client.GetStream();
+                await ReadReplyAsync(stream, default);
+                await SendAsync(stream, "USER anonymous");
+                await ReadReplyAsync(stream, default);
+                await SendAsync(stream, "PASS test@test.net");
+                await ReadReplyAsync(stream, default);
+                await SendAsync(stream, "PASV");
+                var dataPort = ParsePasvPort(await ReadReplyAsync(stream, default));
+
+                await SendAsync(stream, "REIN");
+                Assert.StartsWith("220", await ReadReplyAsync(stream, default));
+
+                await Task.Delay(500);
+                using var late = new TcpClient();
+                var connectedLate = true;
+                try
+                {
+                    await late.ConnectAsync("127.0.0.1", dataPort);
+                }
+                catch (SocketException)
+                {
+                    connectedLate = false;
+                }
+
+                Assert.False(connectedLate, "The PASV listener should have been closed by REIN.");
             }
             finally
             {

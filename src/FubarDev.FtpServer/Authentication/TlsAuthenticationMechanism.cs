@@ -25,6 +25,10 @@ namespace FubarDev.FtpServer.Authentication
     public class TlsAuthenticationMechanism : AuthenticationMechanism, IFeatureHost
 #pragma warning restore CS0618 // Typ oder Element ist veraltet
     {
+        // RFC 2228/4217 PROT levels: C = Clear, P = Private.
+        private const string ProtectionLevelClear = "C";
+        private const string ProtectionLevelPrivate = "P";
+
         private readonly ISslStreamWrapperFactory _sslStreamWrapperFactory;
 
         /// <summary>
@@ -181,12 +185,12 @@ namespace FubarDev.FtpServer.Authentication
                 var secureConnectionFeature = Connection.Features.Get<ISecureConnectionFeature>();
                 switch (protCode.ToUpperInvariant())
                 {
-                    case "C":
+                    case ProtectionLevelClear:
                         secureConnectionFeature.CreateEncryptedStream = Task.FromResult;
                         secureConnectionFeature.IsDataConnectionProtected = false;
                         response = new FtpResponse(200, T("Data channel protection level set to {0}.", protCode));
                         break;
-                    case "P":
+                    case ProtectionLevelPrivate:
                         secureConnectionFeature.CreateEncryptedStream = stream => CreateSslStream(hostSelector.SelectedHost, stream);
                         secureConnectionFeature.IsDataConnectionProtected = true;
                         response = new FtpResponse(200, T("Data channel protection level set to {0}.", protCode));
