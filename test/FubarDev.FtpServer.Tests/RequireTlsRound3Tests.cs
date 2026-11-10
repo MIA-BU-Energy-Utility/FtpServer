@@ -353,6 +353,46 @@ namespace FubarDev.FtpServer.Tests
             }
         }
 
+        // REIN clears EPSV ALL's PASV lock, same as a fresh connection never having set it.
+        [Fact(Timeout = 60000)]
+        public async Task Rein_AfterEpsvAll_AllowsPasvAgain()
+        {
+            var host = new Host(_out, requireTlsForLogin: false, requireProtectedDataConnections: false);
+            await host.InitializeAsync();
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync("127.0.0.1", host.Server.Port);
+                var stream = client.GetStream();
+                await ReadReplyAsync(stream, default);
+                await SendAsync(stream, "USER anonymous");
+                await ReadReplyAsync(stream, default);
+                await SendAsync(stream, "PASS test@test.net");
+                await ReadReplyAsync(stream, default);
+
+                // EPSV ALL sends no reply by design (a pre-existing, out-of-scope bug).
+                await SendAsync(stream, "EPSV ALL");
+
+                await SendAsync(stream, "PASV");
+                Assert.StartsWith("500", await ReadReplyAsync(stream, default));
+
+                await SendAsync(stream, "REIN");
+                Assert.StartsWith("220", await ReadReplyAsync(stream, default));
+
+                await SendAsync(stream, "USER anonymous");
+                await ReadReplyAsync(stream, default);
+                await SendAsync(stream, "PASS test@test.net");
+                await ReadReplyAsync(stream, default);
+
+                await SendAsync(stream, "PASV");
+                Assert.StartsWith("227", await ReadReplyAsync(stream, default));
+            }
+            finally
+            {
+                await host.DisposeAsync();
+            }
+        }
+
         /// <summary>
         /// Implicit FTPS (the whole control connection is TLS from the first byte) plus
         /// <see cref="AuthTlsOptions.RequireTlsForLogin"/> must still allow a normal login -

@@ -3,6 +3,7 @@
 // </copyright>
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -59,14 +60,19 @@ namespace FubarDev.FtpServer.CommandHandlers
             var connectionFeature = Connection.Features.Get<IConnectionFeature>();
             var defaultEncoding = Connection.Features.Get<IEncodingFeature>().DefaultEncoding;
 
-            foreach (var featureItem in Connection.Features)
+            foreach (var featureItem in Connection.Features.ToList())
             {
+                Connection.Features[featureItem.Key] = null;
+                if (Connection.Features[featureItem.Key] != null)
+                {
+                    // Still reachable through the parent collection: a connection-level feature, not ours to dispose.
+                    continue;
+                }
+
                 try
                 {
                     switch (featureItem.Value)
                     {
-                        case IFtpConnection _:
-                            break;
                         case IFtpDataConnectionFeature f:
                             await f.DisposeAsync().ConfigureAwait(false);
                             break;
@@ -84,13 +90,10 @@ namespace FubarDev.FtpServer.CommandHandlers
                         featureItem.Key,
                         ex.Message);
                 }
-
-                Connection.Features[featureItem.Key] = null;
             }
 
             var catalogLoader = Connection.ConnectionServices.GetRequiredService<IFtpCatalogLoader>();
             FtpConnectionData.InitializeSessionFeatures(Connection.Features, defaultEncoding, catalogLoader);
-            Connection.Features.Set<IFtpDataConnectionConfigurationFeature>(new FtpDataConnectionConfigurationFeature());
 
             var loginStateMachine = Connection.ConnectionServices.GetRequiredService<IFtpLoginStateMachine>();
             loginStateMachine.Reset();
