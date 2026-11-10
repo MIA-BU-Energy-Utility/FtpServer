@@ -20,5 +20,28 @@ namespace FubarDev.FtpServer
         /// Gets or sets a value indicating whether implicit FTPS is used.
         /// </summary>
         public bool ImplicitFtps { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether a client must secure the control
+        /// connection with <c>AUTH TLS</c> before issuing login commands such as
+        /// <c>USER</c>, <c>PASS</c> and <c>ACCT</c>. When enabled, those commands are
+        /// rejected with <c>530</c> until the control connection is TLS-secured.
+        /// Defaults to <see langword="false"/> so existing deployments keep accepting
+        /// plaintext logins unless they opt in.
+        /// </summary>
+        public bool RequireTlsForLogin { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether every command that opens a data connection
+        /// (<c>RETR</c>, <c>STOR</c>, <c>APPE</c>, <c>LIST</c>, <c>NLST</c>, <c>MLSD</c>,
+        /// <c>SITE BLST</c>, ...) requires the client to have selected <c>PROT P</c>
+        /// beforehand. When enabled, those commands are rejected with <c>521</c> until the
+        /// client switches the data channel protection level to <c>P</c>. Defaults to
+        /// <see langword="false"/> so existing deployments keep allowing plaintext data
+        /// connections unless they opt in. This does not by itself protect credentials (see
+        /// <see cref="RequireTlsForLogin"/>) or control-channel-only listings such as
+        /// <c>STAT</c>/<c>MLST</c>, which never open a data connection.
+        /// </summary>
+        public bool RequireProtectedDataConnections { get; set; }
     }
 }

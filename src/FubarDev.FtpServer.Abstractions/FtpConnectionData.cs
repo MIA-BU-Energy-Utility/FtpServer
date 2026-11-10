@@ -44,11 +44,7 @@ namespace FubarDev.FtpServer
             IFtpCatalogLoader catalogLoader)
         {
             _featureCollection = featureCollection;
-            featureCollection.Set<ILocalizationFeature>(new LocalizationFeature(catalogLoader));
-            featureCollection.Set<IFileSystemFeature>(new FileSystemFeature());
-            featureCollection.Set<IAuthorizationInformationFeature>(new AuthorizationInformationFeature());
-            featureCollection.Set<IEncodingFeature>(new EncodingFeature(defaultEncoding));
-            featureCollection.Set<ITransferConfigurationFeature>(new TransferConfigurationFeature());
+            InitializeSessionFeatures(featureCollection, defaultEncoding, catalogLoader);
         }
 
         /// <inheritdoc />
@@ -262,6 +258,26 @@ namespace FubarDev.FtpServer
         /// </summary>
         [Obsolete("Use IFtpConnection.Features to store custom information.")]
         public dynamic UserData { get; set; } = new ExpandoObject();
+
+        /// <summary>
+        /// Sets the session-default features (encoding, localization, file system, authorization,
+        /// transfer configuration). Used both for a new connection and by <c>REIN</c> to reset to a
+        /// fresh session on the same connection.
+        /// </summary>
+        /// <param name="featureCollection">The feature collection to populate.</param>
+        /// <param name="defaultEncoding">The default encoding for the session.</param>
+        /// <param name="catalogLoader">The catalog loader for localization.</param>
+        public static void InitializeSessionFeatures(
+            IFeatureCollection featureCollection,
+            Encoding defaultEncoding,
+            IFtpCatalogLoader catalogLoader)
+        {
+            featureCollection.Set<ILocalizationFeature>(new LocalizationFeature(catalogLoader));
+            featureCollection.Set<IFileSystemFeature>(new FileSystemFeature());
+            featureCollection.Set<IAuthorizationInformationFeature>(new AuthorizationInformationFeature());
+            featureCollection.Set<IEncodingFeature>(new EncodingFeature(defaultEncoding));
+            featureCollection.Set<ITransferConfigurationFeature>(new TransferConfigurationFeature());
+        }
 
         /// <inheritdoc/>
         public void Dispose()

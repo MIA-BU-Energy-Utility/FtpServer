@@ -6,11 +6,14 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
+using FubarDev.FtpServer.DataConnection;
 using FubarDev.FtpServer.Events;
 using FubarDev.FtpServer.Features;
 using FubarDev.FtpServer.ServerCommands;
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FubarDev.FtpServer.ServerCommandHandlers
 {
@@ -20,18 +23,26 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
     public class DataConnectionServerCommandHandler : IServerCommandHandler<DataConnectionServerCommand>
     {
         private readonly IFtpConnectionAccessor _connectionAccessor;
+        private readonly IOptions<AuthTlsOptions> _authTlsOptions;
+        private readonly IOptions<PortCommandOptions> _portOptions;
         private readonly ILogger<DataConnectionServerCommandHandler>? _logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DataConnectionServerCommandHandler"/> class.
         /// </summary>
         /// <param name="connectionAccessor">The FTP connection accessor.</param>
+        /// <param name="authTlsOptions">Options for SSL/TLS connections.</param>
+        /// <param name="portOptions">The <c>PORT</c> command options.</param>
         /// <param name="logger">The logger.</param>
         public DataConnectionServerCommandHandler(
             IFtpConnectionAccessor connectionAccessor,
+            IOptions<AuthTlsOptions> authTlsOptions,
+            IOptions<PortCommandOptions> portOptions,
             ILogger<DataConnectionServerCommandHandler>? logger = null)
         {
             _connectionAccessor = connectionAccessor;
+            _authTlsOptions = authTlsOptions;
+            _portOptions = portOptions;
             _logger = logger;
         }
 
@@ -41,6 +52,33 @@ namespace FubarDev.FtpServer.ServerCommandHandlers
             var connection = _connectionAccessor.FtpConnection;
             var serverCommandWriter = connection.Features.Get<IServerCommandFeature>().ServerCommandWriter;
             var localizationFeature = connection.Features.Get<ILocalizationFeature>();
+
+            // Choke point: every data-opening command goes through here regardless of name.
+            if (_authTlsOptions.Value.RequireProtectedDataConnections
+                && !connection.Features.Get<ISecureConnectionFeature>().IsDataConnectionProtected)
+            {
+                // Close the already-opened PASV/active listener instead of leaving it stranded.
+                var dataConnectionFeature = connection.Features.Get<IFtpDataConnectionFeature>();
+                if (dataConnectionFeature != null)
+                {
+                    await dataConnectionFeature.DisposeAsync().ConfigureAwait(false);
+                    var activeDataConnectionFeatureFactory =
+                        connection.ConnectionServices.GetRequiredService<ActiveDataConnectionFeatureFactory>();
+                    var connectionFeature = connection.Features.Get<IConnectionFeature>();
+                    var replacementFeature = await activeDataConnectionFeatureFactory
+                       .CreateFeatureAsync(null, connectionFeature.RemoteEndPoint, _portOptions.Value.DataPort)
+                       .ConfigureAwait(false);
+                    connection.Features.Set(replacementFeature);
+                }
+
+                var deniedResponse = new FtpResponse(
+                    521,
+                    localizationFeature.Catalog.GetString("Data connections must be encrypted."));
+                await serverCommandWriter
+                   .WriteAsync(new SendResponseServerCommand(deniedResponse), cancellationToken)
+                   .ConfigureAwait(false);
+                return;
+            }
 
             using (new ConnectionKeepAlive(connection, command.Command))
             {

@@ -3,6 +3,7 @@
 // </copyright>
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -11,7 +12,6 @@ using FubarDev.FtpServer.Commands;
 using FubarDev.FtpServer.DataConnection;
 using FubarDev.FtpServer.Features;
 using FubarDev.FtpServer.Features.Impl;
-using FubarDev.FtpServer.FileSystem;
 using FubarDev.FtpServer.Localization;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -49,7 +49,6 @@ namespace FubarDev.FtpServer.CommandHandlers
         /// <inheritdoc />
         public override async Task<IFtpResponse?> Process(FtpCommand command, CancellationToken cancellationToken)
         {
-            // User-Logout
             var authorizationInformationFeature = Connection.Features.Get<IAuthorizationInformationFeature>();
             var user = authorizationInformationFeature.FtpUser;
             var membershipProvider = authorizationInformationFeature.MembershipProvider;
@@ -58,37 +57,22 @@ namespace FubarDev.FtpServer.CommandHandlers
                 await membershipProviderAsync.LogOutAsync(user, cancellationToken);
             }
 
-            // Reset the login
-            var loginStateMachine = Connection.ConnectionServices.GetRequiredService<IFtpLoginStateMachine>();
-            loginStateMachine.Reset();
-
-            // Reset encoding
-            var encodingFeature = Connection.Features.Get<IEncodingFeature>();
-            encodingFeature.Reset();
-
-            // Remember old features
-            var fileSystemFeature = Connection.Features.Get<IFileSystemFeature>();
             var connectionFeature = Connection.Features.Get<IConnectionFeature>();
-            var secureConnectionFeature = Connection.Features.Get<ISecureConnectionFeature>();
+            var defaultEncoding = Connection.Features.Get<IEncodingFeature>().DefaultEncoding;
 
-            // Reset to empty file system
-            fileSystemFeature.FileSystem = new EmptyUnixFileSystem();
-            fileSystemFeature.Path.Clear();
-
-            // Remove the control connection encryption
-            await secureConnectionFeature.CloseEncryptedControlStream(cancellationToken)
-               .ConfigureAwait(false);
-
-            // Dispose and remove all features (if disposable)
-            foreach (var featureItem in Connection.Features)
+            foreach (var featureItem in Connection.Features.ToList())
             {
+                Connection.Features[featureItem.Key] = null;
+                if (Connection.Features[featureItem.Key] != null)
+                {
+                    // Still reachable through the parent collection: a connection-level feature, not ours to dispose.
+                    continue;
+                }
+
                 try
                 {
                     switch (featureItem.Value)
                     {
-                        case IFtpConnection _:
-                            // Never dispose the connection itself.
-                            break;
                         case IFtpDataConnectionFeature f:
                             await f.DisposeAsync().ConfigureAwait(false);
                             break;
@@ -106,15 +90,18 @@ namespace FubarDev.FtpServer.CommandHandlers
                         featureItem.Key,
                         ex.Message);
                 }
-
-                // Remove from features collection
-                Connection.Features[featureItem.Key] = null;
             }
 
-            // Reset the FTP data connection configuration feature
-            Connection.Features.Set<IFtpDataConnectionConfigurationFeature>(new FtpDataConnectionConfigurationFeature());
+            var catalogLoader = Connection.ConnectionServices.GetRequiredService<IFtpCatalogLoader>();
+            FtpConnectionData.InitializeSessionFeatures(Connection.Features, defaultEncoding, catalogLoader);
 
-            // Set the default FTP data connection feature
+            var loginStateMachine = Connection.ConnectionServices.GetRequiredService<IFtpLoginStateMachine>();
+            loginStateMachine.Reset();
+
+            var secureConnectionFeature = Connection.Features.Get<ISecureConnectionFeature>();
+            await secureConnectionFeature.CloseEncryptedControlStream(cancellationToken)
+               .ConfigureAwait(false);
+
             var activeDataConnectionFeatureFactory = Connection.ConnectionServices.GetRequiredService<ActiveDataConnectionFeatureFactory>();
             var dataConnectionFeature = await activeDataConnectionFeatureFactory.CreateFeatureAsync(null, connectionFeature.RemoteEndPoint, _dataPort)
                .ConfigureAwait(false);
